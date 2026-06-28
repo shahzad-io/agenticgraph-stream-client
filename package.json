@@ -1,0 +1,19 @@
+{
+  "name": "@agenticgraph/stream-client-monorepo",
+  "private": true,
+  "workspaces": [
+    "packages/*"
+  ],
+  "dependencies": {
+    "@agenticgraph/stream-client": "*"
+  },
+  "scripts": {
+    "build": "npm run build -w @agenticgraph/stream-client && npm run build -w @agenticgraph/stream-react && npm run build -w @agenticgraph/stream-vue",
+    "typecheck": "npm run typecheck -w @agenticgraph/stream-client && npm run build -w @agenticgraph/stream-client && npm run typecheck -w @agenticgraph/stream-react && npm run typecheck -w @agenticgraph/stream-vue",
+    "test": "npm run build -w @agenticgraph/stream-client && npm run test -w @agenticgraph/stream-client && npm run test -w @agenticgraph/stream-react && npm run test -w @agenticgraph/stream-vue",
+    "integration:sse": "npm run build -w @agenticgraph/stream-client && node scripts/sse-integration-harness.mjs"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.3"
+  }
+}
