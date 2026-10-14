@@ -21,7 +21,7 @@ export type StreamErrorDetail =
   | {
       kind: 'replay_unavailable';
       cursor: number;
-      final_state?: unknown;
+      final_state?: Record<string, unknown> | null;
     };
 
 /**

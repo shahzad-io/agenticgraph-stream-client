@@ -77,7 +77,7 @@ export function makeExecutionTerminalEvent(
   'execution_terminal',
   {
     status: typeof status;
-    final_state: Record<string, unknown>;
+    final_state: Record<string, unknown> | null;
     meta?: Record<string, unknown>;
   }
 > {
@@ -89,7 +89,7 @@ export function makeExecutionTerminalEvent(
     node_name: null,
     payload: {
       status,
-      final_state: {},
+      final_state: null,
       ...(meta ? { meta } : {}),
     },
   };

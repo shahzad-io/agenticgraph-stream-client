@@ -217,7 +217,7 @@ export class AgenticStream {
 
   private handleEvent(event: StreamEvent): void {
     if (event.eventType === 'stream_replay_unavailable') {
-      const payload = event.payload as { cursor?: number; final_state?: unknown };
+      const payload = event.payload as { cursor?: number; final_state?: Record<string, unknown> | null };
 
       this.updateState({
         ...this.state,

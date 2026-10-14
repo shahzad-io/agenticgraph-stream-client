@@ -101,7 +101,8 @@ export type ExecutionTerminalStatus = 'completed' | 'interrupted' | 'failed';
 
 export interface ExecutionTerminalPayload {
   status: ExecutionTerminalStatus;
-  final_state: Record<string, unknown>;
+  /** null unless the server sets AGENTICGRAPH_STREAM_EXPOSE_FINAL_STATE=true (wire contract v1.1). */
+  final_state: Record<string, unknown> | null;
   meta?: Record<string, unknown>;
   stream?: LifecycleStreamTelemetry;
 }

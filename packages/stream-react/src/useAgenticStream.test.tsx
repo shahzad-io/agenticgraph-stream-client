@@ -349,7 +349,7 @@ describe('useAgenticStream + SSETransport (React)', () => {
           seq: 4,
           node_seq: null,
           occurred_at: '2024-01-01T00:00:00+00:00',
-          payload: { status: 'completed', final_state: {} },
+          payload: { status: 'completed', final_state: null },
         },
         '4',
       );
