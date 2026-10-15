@@ -1,11 +1,15 @@
 import { describe, expect, it, vi } from 'vitest';
 import { AgenticStream } from './agentic-stream.js';
 import { MockTransport } from './transports/mock-transport.js';
+import { SSETransport } from './transports/sse-transport.js';
+import type { EventSourceLike } from './transports/sse-types.js';
 import {
   makeExecutionTerminalEvent,
   makeNodeInterruptEvent,
   makeStreamCloseEvent,
   makeStreamErrorEvent,
+  makeStreamReplayUnavailableEvent,
+  makeStreamResumeEvent,
   makeTextDeltaEvent,
   resetSeqCounter,
 } from './testing/event-fixtures.js';
@@ -383,18 +387,7 @@ describe('StreamInterrupt.payload', () => {
     const transport = new MockTransport();
     const stream = await AgenticStream.connect({ transport });
 
-    transport.emit({
-      eventType: 'stream_replay_unavailable',
-      stream_id: 's',
-      execution_id: 'e',
-      node_name: null,
-      span_id: null,
-      parent_span_id: null,
-      seq: 1,
-      node_seq: null,
-      occurred_at: '2024-01-01T00:00:00+00:00',
-      payload: { cursor: '7' },
-    } as StreamEvent);
+    transport.emit(makeStreamReplayUnavailableEvent('7'));
 
     expect(stream.status).toBe('error');
     expect(stream.error).toMatchObject({
@@ -445,6 +438,129 @@ describe('connect() awaits connected state', () => {
     transport.emit(makeTextDeltaEvent('after-connect'));
 
     expect(received).toEqual(['after-connect']);
+
+    await stream.disconnect();
+  });
+});
+
+describe('B2 status model and connection states', () => {
+  it('moves from interrupted back to streaming on stream_resume and clears the interrupt', async () => {
+    const transport = new MockTransport();
+    const stream = await AgenticStream.connect({ transport });
+
+    transport.emit(makeNodeInterruptEvent());
+    transport.emit(makeExecutionTerminalEvent('interrupted'));
+    expect(stream.status).toBe('interrupted');
+
+    transport.emit(makeStreamResumeEvent());
+
+    expect(stream.status).toBe('streaming');
+    expect(stream.interrupt).toBeNull();
+
+    await stream.disconnect();
+  });
+
+  it('ignores replay_unavailable once the stream is complete', async () => {
+    const transport = new MockTransport();
+    const stream = await AgenticStream.connect({ transport });
+
+    transport.emit(makeExecutionTerminalEvent('completed'));
+    transport.emit(makeStreamReplayUnavailableEvent(4));
+
+    expect(stream.status).toBe('complete');
+    expect(stream.error).toBeNull();
+
+    await stream.disconnect();
+  });
+
+  it('keeps a failed terminal error when the transport disconnects afterwards', async () => {
+    const transport = new MockTransport();
+    const stream = await AgenticStream.connect({ transport });
+
+    transport.emit(makeExecutionTerminalEvent('failed'));
+    transport.simulateDrop();
+
+    expect(stream.status).toBe('error');
+    expect(stream.error).toMatchObject({ kind: 'terminal_error', source: 'execution_terminal' });
+
+    await stream.disconnect();
+  });
+
+  function failingSse(maxAttempts: number, resolveUrl?: () => string | null) {
+    const sources: EventSourceLike[] = [];
+    const transport = new SSETransport({
+      url: 'http://localhost/streams/s1',
+      maxAttempts,
+      resolveUrl,
+      eventSourceFactory: (url) => {
+        const source: EventSourceLike = {
+          url,
+          onopen: null,
+          onerror: null,
+          readyState: 0,
+          addEventListener() {},
+          removeEventListener() {},
+          close() {},
+        };
+        sources.push(source);
+
+        return source;
+      },
+    });
+
+    return { transport, sources };
+  }
+
+  it('rejects connect() when the transport fails before it opens', async () => {
+    const { transport, sources } = failingSse(0);
+    const connecting = AgenticStream.connect({ transport });
+
+    sources[0]!.onerror?.(new Event('error'));
+
+    await expect(connecting).rejects.toThrow('Stream transport failed to connect');
+  });
+
+  it('sets a connection error when the transport reports failed', async () => {
+    const { transport, sources } = failingSse(0);
+    const connecting = AgenticStream.connect({ transport });
+
+    sources[0]!.onopen?.(new Event('open'));
+    const stream = await connecting;
+    transport._handleSseMessage('text_delta', {
+      stream_id: 's',
+      execution_id: 'e',
+      node_name: null,
+      span_id: null,
+      parent_span_id: null,
+      seq: 1,
+      node_seq: 1,
+      occurred_at: '2024-01-01T00:00:00+00:00',
+      payload: { delta: 'x', message_id: 'm', timestamp: 1 },
+    });
+    sources[0]!.onerror?.(new Event('error'));
+
+    expect(transport.getConnectionState()).toBe('failed');
+    expect(stream.status).toBe('error');
+    expect(stream.error).toEqual({ kind: 'connection', message: 'Reconnect attempts exhausted' });
+
+    await stream.disconnect();
+  });
+
+  it('does not set an error when resolveUrl returns null', async () => {
+    vi.useFakeTimers();
+    const { transport, sources } = failingSse(5, () => null);
+    const connecting = AgenticStream.connect({ transport });
+
+    sources[0]!.onopen?.(new Event('open'));
+    const stream = await connecting;
+    sources[0]!.onerror?.(new Event('error'));
+    await vi.advanceTimersByTimeAsync(10_000);
+    vi.useRealTimers();
+
+    expect(transport.getConnectionState()).toBe('disconnected');
+    expect(transport.getStopReason()).toBe('resolver');
+    expect(stream.status).not.toBe('error');
+    expect(stream.error).toBeNull();
 
     await stream.disconnect();
   });

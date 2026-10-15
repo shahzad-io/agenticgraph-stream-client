@@ -35,6 +35,7 @@ export type {
   StreamClosePayload,
   StreamErrorPayload,
   StreamErrorStage,
+  StreamReplayUnavailablePayload,
   StreamResumeGapEvent,
   StreamResumePayload,
 } from './types/payloads/framework.js';
@@ -79,6 +80,7 @@ export type {
   StepFinishEvent,
   StepStartEvent,
   StreamCloseEvent,
+  StreamReplayUnavailableEvent,
   StreamErrorEvent,
   StreamEvent,
   StreamResumeEvent,
@@ -94,7 +96,11 @@ export type {
 export type { FrozenWireBodyKey, StreamWireBody, WireEvent } from './types/wire-body.js';
 export type { StreamStatus } from './types/status.js';
 export type { StreamInterrupt } from './types/interrupt.js';
-export type { StreamTransport, StreamTransportConnectionState } from './transport.js';
+export type {
+  StreamTransport,
+  StreamTransportConnectionState,
+  StreamTransportStopReason,
+} from './transport.js';
 export {
   activeNodeSelector,
   appendTextDelta,

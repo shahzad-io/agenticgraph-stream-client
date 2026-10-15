@@ -127,6 +127,11 @@ export function applyEventToStreamState(
 
       break;
     }
+    case 'stream_resume':
+      next.status = 'streaming';
+      next.interrupt = null;
+      next.error = null;
+      break;
     case 'node_interrupt':
       next.status = 'interrupted';
       next.error = null;
@@ -157,7 +162,7 @@ export function applyConnectionDrop(
   current: StreamStateSnapshot,
   message = 'Connection lost',
 ): StreamStateSnapshot {
-  if (current.status === 'complete' || current.status === 'interrupted') {
+  if (current.status === 'complete' || current.status === 'interrupted' || current.status === 'error') {
     return current;
   }
 

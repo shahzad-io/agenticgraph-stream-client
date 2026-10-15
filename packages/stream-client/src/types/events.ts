@@ -10,6 +10,7 @@ import type {
   NodeStartPayload,
   StreamClosePayload,
   StreamErrorPayload,
+  StreamReplayUnavailablePayload,
   StreamResumePayload,
 } from './payloads/framework.js';
 import type {
@@ -87,6 +88,16 @@ export type StreamCloseEvent = {
   payload: StreamClosePayload;
 };
 
+/**
+ * SSE control event: NOT the 9-field wire envelope, no seq. Delivered by SSETransport to
+ * AgenticStream, which turns it into `error.kind === 'replay_unavailable'`; never dispatched
+ * to `.on()` listeners.
+ */
+export type StreamReplayUnavailableEvent = {
+  eventType: 'stream_replay_unavailable';
+  payload: StreamReplayUnavailablePayload;
+};
+
 export type FrameworkWireEvent =
   | GraphStartEvent
   | GraphCompleteEvent
@@ -152,4 +163,4 @@ export type OpaqueStreamEvent = StreamWireBody & {
 /**
  * Full wire ingress type: frozen framework + Prism types, plus opaque author/unknown events.
  */
-export type StreamEvent = KnownStreamEvent | OpaqueStreamEvent;
+export type StreamEvent = KnownStreamEvent | StreamReplayUnavailableEvent | OpaqueStreamEvent;

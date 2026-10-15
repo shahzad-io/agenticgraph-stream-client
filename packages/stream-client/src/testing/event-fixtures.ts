@@ -1,4 +1,4 @@
-import type { StreamCloseEvent } from '../types/events.js';
+import type { StreamCloseEvent, StreamReplayUnavailableEvent } from '../types/events.js';
 import type { WireEvent } from '../types/wire-body.js';
 import type { TextDeltaPayload } from '../types/payloads/prism.js';
 import type { NodeInterruptPayload } from '../types/payloads/framework.js';
@@ -124,17 +124,11 @@ export function makeStreamErrorEvent(): WireEvent<
   };
 }
 
-export function makeStreamReplayUnavailableEvent(cursor = 5): WireEvent<
-  'stream_replay_unavailable',
-  { cursor: number }
-> {
+export function makeStreamReplayUnavailableEvent(cursor: number | string = 5): StreamReplayUnavailableEvent {
   return {
     eventType: 'stream_replay_unavailable',
-    ...BASE_WIRE,
-    seq: nextSeq(),
-    node_seq: null,
     payload: { cursor },
-  } as WireEvent<'stream_replay_unavailable', { cursor: number }>;
+  };
 }
 
 export function makeThinkingDeltaEvent(

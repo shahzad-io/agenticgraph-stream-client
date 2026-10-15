@@ -116,6 +116,16 @@ export interface StreamClosePayload {
   meta: unknown;
 }
 
+/**
+ * SSE control event `replay_unavailable`: the cursor is gone from the store. No wire body,
+ * no seq. `cursor` may arrive as a string from PHP; read it with parseReplayCursor().
+ */
+export interface StreamReplayUnavailablePayload {
+  cursor: number | string;
+  /** Present only when the stream URL carries `execution_id`; null unless the server exposes it. */
+  final_state?: Record<string, unknown> | null;
+}
+
 export type StreamErrorStage = 'store' | 'transport' | 'observer';
 
 export interface StreamErrorPayload {

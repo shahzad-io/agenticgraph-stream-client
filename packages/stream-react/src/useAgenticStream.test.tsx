@@ -246,7 +246,10 @@ interface FakeEventSource extends EventSourceLike {
 function createFakeEventSource(url: string): FakeEventSource {
   const listeners = new Map<string, (event: MessageEvent) => void>();
 
-  return {
+  // Like a real EventSource: open fires asynchronously after construction.
+  queueMicrotask(() => fake.onopen?.(new Event('open')));
+
+  const fake: FakeEventSource = {
     url,
     onopen: null,
     onerror: null,
@@ -274,6 +277,8 @@ function createFakeEventSource(url: string): FakeEventSource {
       } as MessageEvent);
     },
   };
+
+  return fake;
 }
 
 const wireBody = (seq: number, payload: Record<string, unknown>) => ({

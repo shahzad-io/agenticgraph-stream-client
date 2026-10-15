@@ -12,7 +12,11 @@ import type { KnownStreamEvent } from './types/events.js';
 import type { StreamEvent } from './types/events.js';
 import type { StreamInterrupt } from './types/interrupt.js';
 import type { StreamStatus } from './types/status.js';
-import type { StreamTransport, StreamTransportConnectionState } from './transport.js';
+import type {
+  StreamTransport,
+  StreamTransportConnectionState,
+  StreamTransportStopReason,
+} from './transport.js';
 
 export interface AgenticStreamConnectOptions {
   transport: StreamTransport;
@@ -48,7 +52,8 @@ export class AgenticStream {
    * Connect a transport and return the stream.
    *
    * Resolves only once the transport reports `connected` — use this before kicking off
-   * a client-initiated broadcast flow so the subscription is live first.
+   * a client-initiated broadcast flow so the subscription is live first. Rejects when the
+   * transport reports `failed` first.
    *
    * Broadcast is fire-and-forget (no replay). Events emitted before subscription are lost;
    * SSE with cursor/seq is the gap-free-from-start alternative.
@@ -148,7 +153,8 @@ export class AgenticStream {
   }
 
   /**
-   * Manual reconnect. No-op when already connected. Tears down transport subscription first.
+   * Manual reconnect. No-op when already connected. SSETransport reconnects by itself;
+   * use this after it reports `failed`.
    */
   async reconnect(): Promise<void> {
     if (this.reconnecting) {
@@ -180,23 +186,37 @@ export class AgenticStream {
       return Promise.resolve();
     }
 
-    const onStateChange = this.transport.onConnectionStateChange;
+    const onStateChange = this.transport.onConnectionStateChange?.bind(this.transport);
 
     if (onStateChange === undefined) {
       return Promise.resolve();
     }
 
-    return new Promise((resolve) => {
-      const unsubscribe = onStateChange((state) => {
+    return new Promise((resolve, reject) => {
+      const settle = (state: StreamTransportConnectionState): boolean => {
         if (state === target) {
-          unsubscribe();
           resolve();
+
+          return true;
+        }
+
+        if (state === 'failed') {
+          reject(new Error('Stream transport failed to connect'));
+
+          return true;
+        }
+
+        return false;
+      };
+
+      const unsubscribe = onStateChange((state) => {
+        if (settle(state)) {
+          unsubscribe();
         }
       });
 
-      if (this.transport.getConnectionState() === target) {
+      if (settle(this.transport.getConnectionState())) {
         unsubscribe();
-        resolve();
       }
     });
   }
@@ -209,14 +229,18 @@ export class AgenticStream {
     this.transport.onEvent(this.transportEventHandler);
 
     if (this.transport.onConnectionStateChange) {
-      this.connectionStateUnsubscribe = this.transport.onConnectionStateChange((state) => {
-        this.handleConnectionStateChange(state);
+      this.connectionStateUnsubscribe = this.transport.onConnectionStateChange((state, stopReason) => {
+        this.handleConnectionStateChange(state, stopReason ?? null);
       });
     }
   }
 
   private handleEvent(event: StreamEvent): void {
     if (event.eventType === 'stream_replay_unavailable') {
+      if (this.state.status === 'complete') {
+        return;
+      }
+
       const payload = event.payload as { cursor?: number; final_state?: Record<string, unknown> | null };
 
       this.updateState({
@@ -241,8 +265,14 @@ export class AgenticStream {
     this.eventStream.dispatch(event);
   }
 
-  private handleConnectionStateChange(state: StreamTransportConnectionState): void {
-    if (state === 'disconnected' && this.connected) {
+  private handleConnectionStateChange(
+    state: StreamTransportConnectionState,
+    stopReason: StreamTransportStopReason | null,
+  ): void {
+    if (state === 'failed') {
+      this.updateState(applyConnectionDrop(this.state, 'Reconnect attempts exhausted'));
+    } else if (state === 'disconnected' && this.connected && stopReason !== 'resolver') {
+      // resolveUrl returned null: the app ended the stream on purpose, not a drop.
       this.updateState(applyConnectionDrop(this.state));
     }
   }

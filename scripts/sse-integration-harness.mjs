@@ -1,557 +1,598 @@
 #!/usr/bin/env node
 /**
- * Phase 3a — SSE integration harness.
+ * Live SSE harness.
  *
- * Validates @agenticgraph/stream-client SSETransport against REAL laravel-app SSE output.
- * Does NOT modify SDK core — reports mismatches as findings.
+ * Starts laravel-app itself: two `php -S` servers from public/ (normal and short
+ * max_duration), one real queue worker, Redis DB 5/6 flushed first. Then reads real runs
+ * of the linear-sse-demo graph through SSETransport + AgenticStream and compares every
+ * client run with the stored stream (seq by seq, and the text).
  *
- * Usage:
- *   SSE_APP_URL=http://laravel-app.test npm run integration:sse
+ *   1. live run read while it streams
+ *   2. planned closes during a run (short max_duration)
+ *   3. forced network drops (TCP proxy), backoff
+ *   4. SSE approval run: wait longer than max_duration, approve, resumed segment
+ *   5. a real "gone" cursor (truncated stream)
  *
- * Prerequisites:
- *   - laravel-app running (Herd)
- *   - OPENAI_API_KEY configured
- *   - Redis + stream store available (default redis driver)
- *   - Database queue + migrations
+ * Check 6 (IIFE build on a plain HTML page, real browser) uses the same servers:
+ *   KEEP_SERVERS=1 npm run integration:sse     keeps them up after the checks
+ *   node scripts/sse-integration-harness.mjs stored <stream_url>   prints the stored stream
+ *
+ * Needs: OPENAI_API_KEY in laravel-app/.env, Redis on 127.0.0.1:6379. Report also
+ * written to $AG2_SCRATCH/b2-harness-report.json (default /tmp/ag2).
  */
 
-import { spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import net from 'node:net';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import {
-  AgenticStream,
-  SSETransport,
-  appendTextDelta,
-  FROZEN_WIRE_BODY_KEYS,
-  isStreamWireBody,
-  parseSseFrame,
-} from '@agenticgraph/stream-client';
+import { AgenticStream, SSETransport, parseSseFrame } from '@agenticgraph/stream-client';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SSE_APP_DIR = resolve(__dirname, '../../laravel-app');
-const BASE_URL = (process.env.SSE_APP_URL ?? 'http://laravel-app.test').replace(/\/$/, '');
-const TOPIC = process.env.SSE_DEMO_TOPIC ?? 'What is server-sent events in one sentence?';
+const SCRATCH = process.env.AG2_SCRATCH ?? '/tmp/ag2';
+const TOPIC = process.env.SSE_DEMO_TOPIC ?? 'how server-sent events reconnect after a dropped connection';
 
-/** @type {Record<string, 'CLEAN' | { status: 'MISMATCH', detail: string }>} */
-const results = {};
+const LONG_PORT = 8711;
+const SHORT_PORT = 8712;
+const PROXY_PORT = 8713;
+const SHORT_MAX_DURATION = '0.5';
+const SHORT_RETRY_MS = '200';
 
-function pass(key, detail = 'CLEAN') {
-  results[key] = detail === 'CLEAN' ? 'CLEAN' : { status: 'MISMATCH', detail };
-}
+const LONG = `http://127.0.0.1:${LONG_PORT}`;
+const SHORT = `http://127.0.0.1:${SHORT_PORT}`;
 
-function fail(key, detail) {
-  results[key] = { status: 'MISMATCH', detail };
-}
+/** Every PHP process: Redis DB 5/6, Redis queue and stream store, no tracing. */
+const PHP_ENV = {
+  ...process.env,
+  REDIS_DB: '5',
+  REDIS_CACHE_DB: '6',
+  STREAM_STORE_DRIVER: 'redis',
+  QUEUE_CONNECTION: 'redis',
+  AGENTICGRAPH_QUEUE_CONNECTION: 'redis',
+  AGENTICGRAPH_TRACING: 'false',
+  BROADCAST_CONNECTION: 'null',
+  PHP_CLI_SERVER_WORKERS: '16',
+};
 
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
+const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
 
-async function startDemoStream() {
-  if (!existsSync(SSE_APP_DIR)) {
-    throw new Error(`laravel-app not found at ${SSE_APP_DIR}`);
+async function waitFor(predicate, timeoutMs, label) {
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    if (predicate()) {
+      return;
+    }
+
+    await sleep(50);
   }
 
-  const result = spawnSync(
-    'php',
-    ['artisan', 'linear-sse:start', '--json', '--process-queue', `--topic=${TOPIC}`],
-    {
-      cwd: SSE_APP_DIR,
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-      env: {
-        ...process.env,
-        QUEUE_CONNECTION: 'sync',
-        AGENTICGRAPH_QUEUE_CONNECTION: 'sync',
-      },
-    },
+  throw new Error(`Timed out after ${timeoutMs} ms waiting for ${label}`);
+}
+
+// --- environment -----------------------------------------------------------------------
+
+const children = [];
+
+function flushRedis() {
+  const result = spawnSync('php', ['-r', '$r = new Redis(); $r->connect("127.0.0.1", 6379); foreach ([5, 6] as $db) { $r->select($db); $r->flushDb(); } echo "ok";']);
+
+  if (String(result.stdout) !== 'ok') {
+    throw new Error(`Redis flush failed: ${result.stderr}`);
+  }
+}
+
+function startPhp(name, args, cwd, env) {
+  const child = spawn('php', args, { cwd, env, stdio: ['ignore', 'ignore', 'pipe'] });
+  const errors = [];
+  child.stderr.on('data', (chunk) => errors.push(String(chunk)));
+  child.on('exit', (code) => {
+    if (code !== null && code !== 0 && !shuttingDown) {
+      console.error(`${name} exited with ${code}: ${errors.join('').slice(-2000)}`);
+    }
+  });
+  children.push(child);
+
+  return child;
+}
+
+function startServer(port, extraEnv) {
+  return startPhp(
+    `php -S :${port}`,
+    ['-S', `127.0.0.1:${port}`, '../vendor/laravel/framework/src/Illuminate/Foundation/resources/server.php'],
+    resolve(SSE_APP_DIR, 'public'),
+    { ...PHP_ENV, ...extraEnv },
   );
-
-  if (result.status !== 0) {
-    throw new Error(
-      `linear-sse:start failed (exit ${result.status}):\n${result.stderr ?? result.stdout}`,
-    );
-  }
-
-  const jsonLine = result.stdout
-    .trim()
-    .split('\n')
-    .find((line) => line.startsWith('{'));
-
-  if (!jsonLine) {
-    throw new Error(`No JSON payload from artisan:\n${result.stdout}`);
-  }
-
-  return /** @type {{ execution_id: string, stream_id: string, stream_url: string }} */ (
-    JSON.parse(jsonLine)
-  );
 }
 
-/**
- * Node fetch-based EventSourceLike — the `eventsource` npm package does not dispatch
- * typed `event:` listeners against this server; fetch streaming + parseSseFrame does.
- * Validates SSETransport's listener wiring without modifying SDK core.
- * @param {string} url
- */
-function createFetchEventSource(url) {
-  /** @type {Map<string, Array<(event: MessageEvent) => void>>} */
-  const listeners = new Map();
-  let closed = false;
-  let readyState = 0;
-  const controller = new AbortController();
+async function waitForServer(base) {
+  const deadline = Date.now() + 20_000;
 
-  void (async () => {
+  while (Date.now() < deadline) {
     try {
-      const response = await fetch(url, {
-        signal: controller.signal,
-        headers: { Accept: 'text/event-stream' },
-      });
-
-      if (!response.ok || !response.body) {
-        throw new Error(`SSE fetch failed (${response.status})`);
-      }
-
-      readyState = 1;
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-
-      while (!closed) {
-        const { done, value } = await reader.read();
-
-        if (done) {
-          break;
-        }
-
-        buffer += decoder.decode(value, { stream: true });
-
-        let separatorIndex = buffer.indexOf('\n\n');
-
-        while (separatorIndex !== -1) {
-          const block = buffer.slice(0, separatorIndex);
-          buffer = buffer.slice(separatorIndex + 2);
-          const frame = parseSseFrame(block);
-
-          if (frame?.eventType) {
-            const handlers = listeners.get(frame.eventType) ?? [];
-            const message = {
-              data: JSON.stringify(frame.data),
-              lastEventId: frame.id ?? '',
-              type: frame.eventType,
-            };
-
-            for (const handler of handlers) {
-              handler(/** @type {MessageEvent} */ (message));
-            }
-
-            if (frame.eventType === 'execution_terminal') {
-              closed = true;
-              readyState = 2;
-              await reader.cancel();
-              return;
-            }
-          }
-
-          separatorIndex = buffer.indexOf('\n\n');
-        }
+      if ((await fetch(`${base}/up`)).ok) {
+        return;
       }
     } catch {
-      // aborted / connection closed
-    } finally {
-      readyState = 2;
+      // not listening yet
     }
-  })();
 
-  return {
-    url,
-    onopen: null,
-    onerror: null,
-    addEventListener(type, listener) {
-      if (!listeners.has(type)) {
-        listeners.set(type, []);
+    await sleep(200);
+  }
+
+  throw new Error(`${base} did not come up`);
+}
+
+let shuttingDown = false;
+
+function shutdown() {
+  shuttingDown = true;
+
+  for (const child of children) {
+    child.kill('SIGTERM');
+  }
+}
+
+/** TCP proxy in front of a server, for forced network drops. */
+function createProxy(listenPort, targetPort) {
+  const pairs = new Set();
+  const proxy = { refuse: 0, accepted: 0, refused: 0 };
+
+  const server = net.createServer((client) => {
+    if (proxy.refuse > 0) {
+      proxy.refuse -= 1;
+      proxy.refused += 1;
+      client.destroy();
+
+      return;
+    }
+
+    proxy.accepted += 1;
+    const upstream = net.connect(targetPort, '127.0.0.1');
+    const pair = { client, upstream };
+    const end = () => {
+      client.destroy();
+      upstream.destroy();
+      pairs.delete(pair);
+    };
+
+    pairs.add(pair);
+    client.pipe(upstream);
+    upstream.pipe(client);
+    client.on('error', end).on('close', end);
+    upstream.on('error', end).on('close', end);
+  });
+
+  proxy.listen = () => new Promise((done) => server.listen(listenPort, '127.0.0.1', done));
+  proxy.close = () => server.close();
+  proxy.dropAll = () => {
+    for (const pair of pairs) {
+      pair.client.destroy();
+      pair.upstream.destroy();
+    }
+  };
+
+  return proxy;
+}
+
+// --- client side -----------------------------------------------------------------------
+
+/**
+ * Node has no EventSource: a fetch-based one with browser semantics for what the library
+ * relies on (onopen on a 200, onerror when the request fails or the response ends, typed
+ * `event:` listeners, no native retry). Each instance is one connection in `log`.
+ */
+function nodeEventSourceFactory(log) {
+  return (url) => {
+    const record = { url, startedAt: Date.now(), openedAt: null, failedAt: null, end: null, controls: [] };
+    const listeners = new Map();
+    const controller = new AbortController();
+    let closed = false;
+    let readyState = 0;
+    log.push(record);
+
+    const source = {
+      url,
+      onopen: null,
+      onerror: null,
+      addEventListener(type, listener) {
+        listeners.set(type, [...(listeners.get(type) ?? []), listener]);
+      },
+      removeEventListener(type, listener) {
+        listeners.set(type, (listeners.get(type) ?? []).filter((item) => item !== listener));
+      },
+      close() {
+        if (!closed) {
+          closed = true;
+          readyState = 2;
+          record.end ??= 'closed by client';
+          controller.abort();
+        }
+      },
+      get readyState() {
+        return readyState;
+      },
+    };
+
+    void (async () => {
+      try {
+        const response = await fetch(url, { signal: controller.signal, headers: { Accept: 'text/event-stream' } });
+
+        if (!response.ok || !response.body) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+
+        readyState = 1;
+        record.openedAt = Date.now();
+        source.onopen?.(new Event('open'));
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (!closed) {
+          const { done, value } = await reader.read();
+
+          if (done) {
+            throw new Error('response ended');
+          }
+
+          buffer += decoder.decode(value, { stream: true });
+          let boundary = buffer.indexOf('\n\n');
+
+          while (boundary !== -1 && !closed) {
+            const frame = parseSseFrame(buffer.slice(0, boundary));
+            buffer = buffer.slice(boundary + 2);
+            boundary = buffer.indexOf('\n\n');
+
+            if (frame?.eventType) {
+              if (frame.data && typeof frame.data === 'object' && 'control' in frame.data) {
+                record.controls.push(frame.data.control);
+              }
+
+              for (const listener of listeners.get(frame.eventType) ?? []) {
+                listener({ type: frame.eventType, data: JSON.stringify(frame.data), lastEventId: frame.id ?? '' });
+              }
+            }
+          }
+        }
+      } catch (error) {
+        if (closed) {
+          return;
+        }
+
+        readyState = 0;
+        record.failedAt = Date.now();
+        record.end = error instanceof Error ? (error.cause?.code ?? error.message) : String(error);
+        source.onerror?.(new Event('error'));
       }
+    })();
 
-      listeners.get(type).push(listener);
-    },
-    removeEventListener(type, listener) {
-      const handlers = listeners.get(type) ?? [];
-      const index = handlers.indexOf(listener);
-
-      if (index >= 0) {
-        handlers.splice(index, 1);
-      }
-    },
-    close() {
-      closed = true;
-      readyState = 2;
-      controller.abort();
-    },
-    get readyState() {
-      return readyState;
-    },
+    return source;
   };
 }
 
-/**
- * @param {string} url
- * @returns {Promise<{ events: import('@agenticgraph/stream-client').StreamEvent[], rawFrames: Array<{ id: string | null, eventType: string | null, data: unknown }>, status: string, text: string, transport: SSETransport }>}
- */
-async function consumeWithSdk(url) {
-  /** @type {import('@agenticgraph/stream-client').StreamEvent[]} */
+/** Follow one stream URL with the library. Resolves once the stream is complete/error or the timeout. */
+async function follow(url, { until = ['complete', 'error'], timeoutMs = 90_000, options = {}, onEvent } = {}) {
+  const connections = [];
   const events = [];
-
-  const transport = new SSETransport({
-    url,
-    eventSourceFactory: (streamUrl) => createFetchEventSource(streamUrl),
-  });
+  const states = [];
+  const statuses = [];
+  const transport = new SSETransport({ url, eventSourceFactory: nodeEventSourceFactory(connections), ...options });
+  transport.onConnectionStateChange((state) => states.push({ state, at: Date.now() }));
 
   const stream = await AgenticStream.connect({ transport });
-
+  stream.onStatusChange((status) => statuses.push(status));
   stream.on((event) => {
-    events.push(event);
+    events.push({ ...event, receivedAt: Date.now(), connection: connections.length - 1 });
+    onEvent?.(event, stream);
   });
 
-  const deadline = Date.now() + 30_000;
+  const run = { stream, transport, events, connections, states, statuses };
+  run.done = waitFor(() => until.includes(stream.status), timeoutMs, `status ${until.join('/')}`).then(() => run);
 
-  while (Date.now() < deadline) {
-    const status = stream.status;
-
-    if (status === 'complete' || status === 'interrupted' || status === 'error') {
-      await stream.disconnect();
-
-      let text = '';
-
-      for (const event of events) {
-        text = appendTextDelta(text, event);
-      }
-
-      return { events, rawFrames: [], status, text, transport };
-    }
-
-    await sleep(250);
-  }
-
-  await stream.disconnect();
-  throw new Error('Timed out waiting for terminal status from SSETransport');
+  return run;
 }
 
-/**
- * Raw SSE fetch for framing validation (independent of EventSource typed listeners).
- * @param {string} url
- */
-async function fetchRawSseFrames(url) {
-  const response = await fetch(url, {
-    headers: { Accept: 'text/event-stream' },
-  });
-
-  if (!response.ok || !response.body) {
-    throw new Error(`SSE GET failed (${response.status})`);
-  }
-
+/** The stored stream, read raw from the normal server until a completed or failed terminal. */
+async function readStored(streamUrl) {
+  const url = new URL(streamUrl);
+  const response = await fetch(`${LONG}${url.pathname}`, { headers: { Accept: 'text/event-stream' } });
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
+  const events = [];
   let buffer = '';
-  /** @type {Array<{ id: string | null, eventType: string | null, data: unknown }>} */
-  const frames = [];
 
-  while (true) {
+  for (;;) {
     const { done, value } = await reader.read();
 
     if (done) {
-      break;
+      return events;
     }
 
     buffer += decoder.decode(value, { stream: true });
+    let boundary = buffer.indexOf('\n\n');
 
-    let separatorIndex = buffer.indexOf('\n\n');
+    while (boundary !== -1) {
+      const frame = parseSseFrame(buffer.slice(0, boundary));
+      buffer = buffer.slice(boundary + 2);
+      boundary = buffer.indexOf('\n\n');
 
-    while (separatorIndex !== -1) {
-      const block = buffer.slice(0, separatorIndex);
-      buffer = buffer.slice(separatorIndex + 2);
-      const frame = parseSseFrame(block);
+      if (frame?.id) {
+        events.push({ eventType: frame.eventType, ...frame.data });
 
-      if (frame !== null) {
-        frames.push(frame);
-
-        if (frame.eventType === 'execution_terminal') {
+        if (frame.eventType === 'execution_terminal' && frame.data.payload.status !== 'interrupted') {
           await reader.cancel();
-          return frames;
+
+          return events;
         }
       }
-
-      separatorIndex = buffer.indexOf('\n\n');
     }
-  }
-
-  return frames;
-}
-
-function validateFraming(rawFrames) {
-  const typed = rawFrames.filter((f) => f.eventType && f.eventType !== 'stream_heartbeat');
-
-  if (typed.length === 0) {
-    fail('framing', 'No typed SSE frames received from raw fetch');
-    return;
-  }
-
-  const bad = [];
-
-  for (const frame of typed) {
-    if (!frame.eventType) {
-      bad.push('missing event: line');
-      continue;
-    }
-
-    if (frame.data === null || frame.data === undefined) {
-      bad.push(`frame ${frame.eventType}: missing data JSON`);
-      continue;
-    }
-
-    if (frame.eventType !== 'stream_heartbeat' && frame.eventType !== 'stream_replay_unavailable') {
-      const body = frame.data;
-
-      if (typeof body === 'object' && body !== null && 'type' in body) {
-        bad.push(`frame ${frame.eventType}: data contains forbidden "type" field (type-external trap)`);
-      }
-    }
-  }
-
-  if (bad.length > 0) {
-    fail('framing', bad.join('; '));
-  } else {
-    pass('framing');
   }
 }
 
-/**
- * @param {import('@agenticgraph/stream-client').StreamEvent[]} events
- */
-function validateWireTypes(events) {
-  const wireIssues = [];
-  const textDeltaIssues = [];
+const textOf = (events) => events.filter((e) => e.eventType === 'text_delta').map((e) => e.payload.delta).join('');
+const seqsOf = (events) => events.filter((e) => typeof e.seq === 'number').map((e) => e.seq);
 
-  for (const event of events) {
-    if (event.eventType === 'stream_close') {
-      continue;
-    }
+async function post(base, path, body) {
+  const response = await fetch(`${base}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify(body),
+  });
 
-    if (!isStreamWireBody(event)) {
-      wireIssues.push(`event seq unknown type ${event.eventType}: missing frozen wire body keys`);
-      continue;
-    }
-
-    for (const key of FROZEN_WIRE_BODY_KEYS) {
-      if (!(key in event)) {
-        wireIssues.push(`${event.eventType}@${event.seq}: missing ${key}`);
-      }
-    }
-
-    if (event.eventType === 'text_delta') {
-      const payload = event.payload;
-
-      if (payload === null || typeof payload !== 'object' || !('delta' in payload)) {
-        textDeltaIssues.push(`text_delta@${event.seq}: payload missing delta`);
-      } else if (typeof payload.delta !== 'string') {
-        textDeltaIssues.push(`text_delta@${event.seq}: delta is ${typeof payload.delta}, expected string`);
-      }
-    }
+  if (!response.ok) {
+    throw new Error(`POST ${path} ${response.status}: ${await response.text()}`);
   }
 
-  if (wireIssues.length > 0) {
-    fail('types', wireIssues.slice(0, 5).join('; '));
-  } else if (textDeltaIssues.length > 0) {
-    fail('types', textDeltaIssues.join('; '));
-  } else {
-    pass('types');
+  return response.json();
+}
+
+/** Text and seq-by-seq comparison of a client run with the stored stream. */
+async function compareWithStored(run, streamUrl) {
+  const stored = await readStored(streamUrl);
+  const clientSeqs = seqsOf(run.events);
+  const storedSeqs = seqsOf(stored);
+
+  return {
+    storedEvents: stored.length,
+    clientEvents: run.events.length,
+    textEqual: textOf(run.events) === textOf(stored),
+    seqsEqual: JSON.stringify(clientSeqs) === JSON.stringify(storedSeqs),
+    duplicates: clientSeqs.length - new Set(clientSeqs).size,
+    missing: storedSeqs.filter((seq) => !clientSeqs.includes(seq)).length,
+    textLength: textOf(stored).length,
+  };
+}
+
+const connectionSummary = (run) => ({
+  connections: run.connections.length,
+  reconnects: run.connections.length - 1,
+  plannedCloses: run.connections.filter((c) => c.controls.includes('reconnect')).length,
+  replayUnavailable: run.connections.filter((c) => c.controls.includes('replay_unavailable')).length,
+  failedState: run.states.some((s) => s.state === 'failed'),
+  ends: run.connections.map((c) => c.end),
+});
+
+// --- checks ----------------------------------------------------------------------------
+
+const results = {};
+
+async function check(name, body) {
+  const started = Date.now();
+
+  try {
+    const detail = await body();
+    results[name] = { pass: detail.pass, ms: Date.now() - started, ...detail };
+  } catch (error) {
+    results[name] = { pass: false, ms: Date.now() - started, error: String(error?.stack ?? error) };
+  }
+
+  console.log(`${results[name].pass ? 'PASS' : 'FAIL'}  ${name}`);
+}
+
+async function check1() {
+  const start = await post(LONG, '/demo/linear-sse/start', { topic: TOPIC });
+  const connectedAt = Date.now();
+  const run = await (await follow(start.stream_url)).done;
+  const deltas = run.events.filter((e) => e.eventType === 'text_delta');
+  const comparison = await compareWithStored(run, start.stream_url);
+  const summary = connectionSummary(run);
+
+  return {
+    pass: run.stream.status === 'complete' && comparison.textEqual && comparison.seqsEqual && summary.connections === 1,
+    streamUrl: start.stream_url,
+    status: run.stream.status,
+    firstDeltaAfterConnectMs: deltas[0].receivedAt - connectedAt,
+    deltaSpreadMs: deltas.at(-1).receivedAt - deltas[0].receivedAt,
+    textDeltas: deltas.length,
+    ...comparison,
+    ...summary,
+  };
+}
+
+async function check2() {
+  const start = await post(SHORT, '/demo/linear-sse/start', { topic: TOPIC });
+  const run = await (await follow(start.stream_url)).done;
+  const comparison = await compareWithStored(run, start.stream_url);
+  const summary = connectionSummary(run);
+  const textConnections = [...new Set(run.events.filter((e) => e.eventType === 'text_delta').map((e) => e.connection))];
+  const startedOn = run.events.find((e) => e.eventType === 'graph_start').connection;
+  const endedOn = run.events.find((e) => e.eventType === 'execution_terminal').connection;
+  const closesDuringRun = run.connections.slice(startedOn, endedOn).filter((c) => c.controls.includes('reconnect')).length;
+
+  return {
+    pass: run.stream.status === 'complete' && comparison.textEqual && comparison.seqsEqual
+      && closesDuringRun >= 1 && !summary.failedState,
+    plannedClosesDuringRun: closesDuringRun,
+    graphStartOnConnection: startedOn,
+    terminalOnConnection: endedOn,
+    maxDurationSeconds: SHORT_MAX_DURATION,
+    status: run.stream.status,
+    connectionsThatCarriedText: textConnections.length,
+    textDeltaTimeline: run.events.filter((e) => e.eventType === 'text_delta').map((e) => [e.seq, e.connection, e.receivedAt - run.connections[0].startedAt]),
+    connectionWindows: run.connections.map((c) => [c.startedAt - run.connections[0].startedAt, c.controls.join(',')]),
+    ...comparison,
+    ...summary,
+  };
+}
+
+async function check3() {
+  const proxy = createProxy(PROXY_PORT, LONG_PORT);
+  await proxy.listen();
+
+  try {
+    const start = await post(LONG, '/demo/linear-sse/start', { topic: TOPIC });
+    const url = start.stream_url.replace(`:${LONG_PORT}/`, `:${PROXY_PORT}/`);
+    let dropped = false;
+    const run = await follow(url, {
+      onEvent: (event) => {
+        if (!dropped && event.eventType === 'text_delta') {
+          dropped = true;
+          proxy.refuse = 2;
+          proxy.dropAll();
+        }
+      },
+    });
+    await run.done;
+
+    const comparison = await compareWithStored(run, start.stream_url);
+    const summary = connectionSummary(run);
+    const attemptDelays = run.connections.slice(1).map((c, i) => c.startedAt - run.connections[i].failedAt);
+    // base 500: attempt n waits within [250, 500] * 2^(n-1)
+    const withinBackoff = attemptDelays.slice(0, 3).every((delay, i) => delay >= 250 * 2 ** i - 20 && delay <= 500 * 2 ** i + 100);
+
+    return {
+      pass: run.stream.status === 'complete' && comparison.textEqual && comparison.seqsEqual
+        && summary.reconnects === 3 && proxy.refused === 2 && withinBackoff && !summary.failedState,
+      status: run.stream.status,
+      refusedByProxy: proxy.refused,
+      attemptDelaysMs: attemptDelays,
+      backoffWindowsMs: ['250-500', '500-1000', '1000-2000'],
+      withinBackoff,
+      ...comparison,
+      ...summary,
+    };
+  } finally {
+    proxy.close();
   }
 }
 
-/**
- * @param {import('@agenticgraph/stream-client').StreamEvent[]} events
- * @param {string} accumulatedText
- */
-function validateTextAccumulation(events, accumulatedText) {
-  const deltas = events
-    .filter((e) => e.eventType === 'text_delta')
-    .map((e) => /** @type {{ delta: string }} */ (e.payload).delta);
+async function check4() {
+  const start = await post(SHORT, '/demo/linear-sse/start', { topic: TOPIC, approval: true });
+  const run = await follow(start.stream_url, { timeoutMs: 120_000 });
+  await waitFor(() => run.stream.status === 'interrupted', 60_000, 'interrupted');
 
-  if (deltas.length === 0) {
-    fail('text_accumulation', 'No text_delta events received from real Prism stream');
-    return;
-  }
+  const waitMs = 3_000;
+  await sleep(waitMs);
+  const duringWait = {
+    status: run.stream.status,
+    connectionsSoFar: run.connections.length,
+    errorSoFar: run.stream.error,
+  };
 
-  const manual = deltas.join('');
+  await post(SHORT, `/demo/linear-sse/${start.execution_id}/resume`, { approved: true });
+  await run.done;
 
-  if (manual !== accumulatedText) {
-    fail(
-      'text_accumulation',
-      `appendTextDelta mismatch: manual="${manual.slice(0, 80)}..." accumulated="${accumulatedText.slice(0, 80)}..."`,
-    );
-    return;
-  }
+  const comparison = await compareWithStored(run, start.stream_url);
+  const summary = connectionSummary(run);
+  const types = run.events.map((e) => e.eventType);
+  const terminals = run.events.filter((e) => e.eventType === 'execution_terminal').map((e) => e.payload.status);
 
-  if (accumulatedText.trim().length === 0) {
-    fail('text_accumulation', 'Accumulated text is empty after real stream');
-    return;
-  }
-
-  pass('text_accumulation');
+  return {
+    pass: run.stream.status === 'complete' && duringWait.status === 'interrupted' && duringWait.errorSoFar === null
+      && summary.replayUnavailable === 0 && !summary.failedState && types.includes('stream_resume')
+      && JSON.stringify(terminals) === '["interrupted","completed"]' && comparison.textEqual && comparison.seqsEqual,
+    maxDurationSeconds: SHORT_MAX_DURATION,
+    waitedWhileInterruptedMs: waitMs,
+    duringWait,
+    statuses: run.statuses,
+    terminals,
+    status: run.stream.status,
+    ...comparison,
+    ...summary,
+  };
 }
 
-function validateStatus(terminalStatus, events) {
-  const terminals = events.filter((e) => e.eventType === 'execution_terminal');
+async function check5(streamUrl) {
+  const streamId = new URL(streamUrl).pathname.split('/').pop();
+  const truncate = spawnSync('php', ['artisan', 'tinker', '--execute',
+    `$s = app(\\Shahzad\\AgenticGraph\\Streaming\\Contracts\\StreamStoreInterface::class); $s->truncate("${streamId}", 6); echo $s->firstSeq("${streamId}");`],
+  { cwd: SSE_APP_DIR, env: PHP_ENV, encoding: 'utf8' });
+  const firstSeq = Number(String(truncate.stdout).trim().split('\n').pop());
 
-  if (terminals.length === 0) {
-    fail('status', 'No execution_terminal in event stream');
-    return;
-  }
+  const run = await (await follow(`${streamUrl}?cursor=2`, { timeoutMs: 15_000 })).done;
+  await sleep(2_000);
+  const summary = connectionSummary(run);
 
-  const terminal = terminals[terminals.length - 1];
-  const payload = /** @type {{ status: string }} */ (terminal.payload);
-
-  if (terminalStatus !== 'complete') {
-    fail('status', `SDK status=${terminalStatus}, expected complete`);
-    return;
-  }
-
-  if (payload.status !== 'completed') {
-    fail('status', `execution_terminal.payload.status=${payload.status}, expected completed`);
-    return;
-  }
-
-  pass('status');
+  return {
+    pass: firstSeq === 6 && run.stream.status === 'error' && run.stream.error?.kind === 'replay_unavailable'
+      && run.stream.error.cursor === 2 && summary.connections === 1 && summary.replayUnavailable === 1
+      && run.transport.getConnectionState() === 'disconnected' && run.events.length === 0,
+    firstSeqAfterTruncate: firstSeq,
+    cursor: 2,
+    status: run.stream.status,
+    error: run.stream.error,
+    connectionState: run.transport.getConnectionState(),
+    eventsDispatched: run.events.length,
+    ...summary,
+  };
 }
 
-/**
- * @param {import('@agenticgraph/stream-client').StreamEvent[]} events
- */
-function validateLifecycle(events) {
-  const types = events.map((e) => e.eventType);
-  const required = ['graph_start', 'node_start', 'node_complete', 'graph_complete', 'execution_terminal'];
-  const missing = required.filter((t) => !types.includes(t));
-
-  const prepareEvents = events.filter((e) => 'node_name' in e && e.node_name === 'prepare');
-  const respondEvents = events.filter((e) => 'node_name' in e && e.node_name === 'respond');
-
-  if (missing.length > 0) {
-    fail('lifecycle', `Missing lifecycle types: ${missing.join(', ')}`);
-    return;
-  }
-
-  if (prepareEvents.length === 0 || respondEvents.length === 0) {
-    fail('lifecycle', 'Expected events for prepare and respond nodes');
-    return;
-  }
-
-  const respondHasPrism = respondEvents.some((e) =>
-    ['text_start', 'text_delta', 'text_complete'].includes(e.eventType),
-  );
-
-  if (!respondHasPrism) {
-    fail('lifecycle', 'respond node missing Prism content events (text_start/delta/complete)');
-    return;
-  }
-
-  pass('lifecycle');
-}
-
-/**
- * @param {import('@agenticgraph/stream-client').StreamEvent[]} events
- */
-function validateNodeSeq(events) {
-  const issues = [];
-
-  for (const nodeName of ['prepare', 'respond']) {
-    const nodeEvents = events.filter(
-      (e) => 'node_name' in e && e.node_name === nodeName && e.eventType !== 'execution_terminal',
-    );
-
-    const seqs = nodeEvents
-      .map((e) => ('node_seq' in e ? e.node_seq : null))
-      .filter((v) => v !== null);
-
-    if (seqs.length === 0) {
-      issues.push(`${nodeName}: no node_seq values`);
-      continue;
-    }
-
-    const expected = Array.from({ length: seqs.length }, (_, i) => i + 1);
-
-    if (JSON.stringify(seqs) !== JSON.stringify(expected)) {
-      issues.push(`${nodeName}: node_seq ${JSON.stringify(seqs)} expected gapless 1..${seqs.length}`);
-    }
-  }
-
-  const globalSeqs = events
-    .filter((e) => 'seq' in e && typeof e.seq === 'number')
-    .map((e) => e.seq);
-
-  for (let i = 1; i < globalSeqs.length; i += 1) {
-    if (globalSeqs[i] <= globalSeqs[i - 1]) {
-      issues.push(`global seq not monotonic at index ${i}: ${globalSeqs[i - 1]} -> ${globalSeqs[i]}`);
-      break;
-    }
-  }
-
-  if (issues.length > 0) {
-    fail('node_seq', issues.join('; '));
-  } else {
-    pass('node_seq');
-  }
-}
-
-function printReport(startPayload, sdkResult, rawFrameCount) {
-  const mismatches = Object.entries(results).filter(([, v]) => v !== 'CLEAN');
-  const verdict = mismatches.length === 0 ? 'CHAIN VALIDATED' : 'MISMATCH FOUND';
-
-  console.log('\n=== Phase 3a SSE Dogfooding Report ===\n');
-  console.log(`Base URL: ${BASE_URL}`);
-  console.log(`Stream URL: ${startPayload.stream_url}`);
-  console.log(`Execution ID: ${startPayload.execution_id}`);
-  console.log(`Events received (SDK): ${sdkResult.events.length}`);
-  console.log(`Raw SSE frames parsed: ${rawFrameCount}`);
-  console.log(`Accumulated text length: ${sdkResult.text.length}`);
-  console.log(`SDK terminal status: ${sdkResult.status}`);
-  console.log('');
-
-  for (const [key, value] of Object.entries(results)) {
-    if (value === 'CLEAN') {
-      console.log(`  ${key}: CLEAN`);
-    } else {
-      console.log(`  ${key}: MISMATCH — ${value.detail}`);
-    }
-  }
-
-  console.log(`\nVERDICT: ${verdict}\n`);
-
-  if (mismatches.length > 0) {
-    process.exitCode = 1;
-  }
-}
+// --- main ------------------------------------------------------------------------------
 
 async function main() {
-  console.log('Starting linear-sse-demo via artisan (dispatch + queue)...');
-  const startPayload = await startDemoStream();
-  console.log(`Stream URL: ${startPayload.stream_url}`);
+  if (process.argv[2] === 'stored') {
+    const stored = await readStored(process.argv[3]);
+    console.log(JSON.stringify({ text: textOf(stored), seqs: seqsOf(stored), types: stored.map((e) => e.eventType) }));
 
-  console.log('Fetching raw SSE frames...');
-  const rawFrames = await fetchRawSseFrames(startPayload.stream_url);
-  validateFraming(rawFrames);
+    return;
+  }
 
-  console.log('Consuming via SSETransport + AgenticStream...');
-  const sdkResult = await consumeWithSdk(startPayload.stream_url);
+  mkdirSync(SCRATCH, { recursive: true });
+  flushRedis();
+  startServer(LONG_PORT, {});
+  startServer(SHORT_PORT, {
+    AGENTICGRAPH_STREAM_SSE_MAX_DURATION: SHORT_MAX_DURATION,
+    AGENTICGRAPH_STREAM_SSE_RETRY_MS: SHORT_RETRY_MS,
+  });
+  startPhp('queue worker', ['artisan', 'queue:work', 'redis', '--queue=agenticgraph,default', '--tries=1', '--timeout=0'], SSE_APP_DIR, PHP_ENV);
+  await Promise.all([waitForServer(LONG), waitForServer(SHORT)]);
+  console.log(`servers up: ${LONG} (max_duration default), ${SHORT} (max_duration ${SHORT_MAX_DURATION}s, retry ${SHORT_RETRY_MS} ms)`);
 
-  validateWireTypes(sdkResult.events);
-  validateTextAccumulation(sdkResult.events, sdkResult.text);
-  validateStatus(sdkResult.status, sdkResult.events);
-  validateLifecycle(sdkResult.events);
-  validateNodeSeq(sdkResult.events);
+  await check('1 live run read while it streams', check1);
+  await check('2 planned closes during a run', check2);
+  await check('3 forced network drop with backoff', check3);
+  await check('4 SSE approval run across planned closes', check4);
+  await check('5 gone cursor (truncated stream)', () => check5(results['1 live run read while it streams'].streamUrl));
 
-  printReport(startPayload, sdkResult, rawFrames.length);
+  const report = { date: new Date().toISOString(), long: LONG, short: SHORT, results };
+  writeFileSync(`${SCRATCH}/b2-harness-report.json`, JSON.stringify(report, null, 2));
+  console.log(JSON.stringify(results, null, 2));
+
+  const failed = Object.values(results).filter((r) => !r.pass).length;
+  console.log(`\nVERDICT: ${failed === 0 ? 'ALL CHECKS PASS' : `${failed} CHECK(S) FAILED`} (report: ${SCRATCH}/b2-harness-report.json)`);
+  process.exitCode = failed === 0 ? 0 : 1;
+
+  if (process.env.KEEP_SERVERS === '1') {
+    console.log(`KEEP_SERVERS=1: plain HTML page at ${LONG}/demo/linear-sse and ${SHORT}/demo/linear-sse. Ctrl+C to stop.`);
+    await new Promise(() => {});
+  }
 }
 
-main().catch((error) => {
-  console.error('\nHarness failed:', error);
-  process.exitCode = 1;
+process.on('SIGINT', () => {
+  shutdown();
+  process.exit(130);
 });
+
+main()
+  .catch((error) => {
+    console.error('\nHarness failed:', error);
+    process.exitCode = 1;
+  })
+  .finally(() => {
+    if (process.env.KEEP_SERVERS !== '1') {
+      shutdown();
+    }
+  });
