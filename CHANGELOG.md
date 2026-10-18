@@ -1,6 +1,11 @@
 # Changelog
 
-## Unreleased
+## 0.1.0 (unreleased)
+
+### Release metadata (B11 session C)
+
+- Each package: `publishConfig.access: public`, a `prepublishOnly` build, its own README and LICENSE (published with `dist`), `repository` (with its directory), `homepage`, `bugs`, `keywords` and `sideEffects` (`false`; the client keeps `dist/index.global.js`, which sets a global). React and Vue depend on `@agenticgraph/stream-client` `^0.1.0` (was `*`). The stray root dependency on the client is removed.
+- Dev: vitest 5, vue 3.5.44 (advisory), lock refreshed. `npm audit` leaves one low esbuild advisory (Windows dev server only) that needs tsup 9, a major.
 
 ### BREAKING (B2: SSE reconnect)
 Needs the agenticgraph core from the same release (wire contract v1.1 B2 amendment: SSE control events).

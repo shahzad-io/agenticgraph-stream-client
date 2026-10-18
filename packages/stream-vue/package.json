@@ -2,6 +2,26 @@
   "name": "@agenticgraph/stream-vue",
   "version": "0.1.0",
   "description": "Vue composables and selectors for AgenticGraph streaming",
+  "keywords": [
+    "agenticgraph",
+    "laravel",
+    "streaming",
+    "sse",
+    "vue",
+    "composables",
+    "ai",
+    "llm"
+  ],
+  "homepage": "https://agenticgraph.dev/docs/stream-getting-started",
+  "bugs": {
+    "url": "https://github.com/shahzad-io/agenticgraph-stream-client/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/shahzad-io/agenticgraph-stream-client.git",
+    "directory": "packages/stream-vue"
+  },
+  "license": "MIT",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -19,15 +39,18 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md",
+    "LICENSE"
   ],
   "scripts": {
     "build": "tsup",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "prepublishOnly": "npm run build"
   },
   "dependencies": {
-    "@agenticgraph/stream-client": "*"
+    "@agenticgraph/stream-client": "^0.1.0"
   },
   "peerDependencies": {
     "vue": ">=3.4"
@@ -37,8 +60,11 @@
     "jsdom": "^26.1.0",
     "tsup": "^8.5.0",
     "typescript": "^5.8.3",
-    "vitest": "^3.2.4",
-    "vue": "^3.5.17"
+    "vitest": "^5.0.5",
+    "vue": "^3.5.44"
   },
-  "license": "MIT"
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public"
+  }
 }

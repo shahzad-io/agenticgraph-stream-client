@@ -2,6 +2,26 @@
   "name": "@agenticgraph/stream-client",
   "version": "0.1.0",
   "description": "Framework-agnostic streaming SDK for AgenticGraph wire events",
+  "keywords": [
+    "agenticgraph",
+    "laravel",
+    "streaming",
+    "sse",
+    "server-sent-events",
+    "laravel-echo",
+    "ai",
+    "llm"
+  ],
+  "homepage": "https://agenticgraph.dev/docs/stream-getting-started",
+  "bugs": {
+    "url": "https://github.com/shahzad-io/agenticgraph-stream-client/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/shahzad-io/agenticgraph-stream-client.git",
+    "directory": "packages/stream-client"
+  },
+  "license": "MIT",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -22,12 +42,15 @@
     "./iife": "./dist/index.global.js"
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md",
+    "LICENSE"
   ],
   "scripts": {
     "build": "tsup",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "prepublishOnly": "npm run build"
   },
   "peerDependencies": {
     "laravel-echo": ">=1.16.0"
@@ -40,7 +63,12 @@
   "devDependencies": {
     "tsup": "^8.5.0",
     "typescript": "^5.8.3",
-    "vitest": "^3.2.4"
+    "vitest": "^5.0.5"
   },
-  "license": "MIT"
+  "sideEffects": [
+    "./dist/index.global.js"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
 }

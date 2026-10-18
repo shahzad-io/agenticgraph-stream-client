@@ -2,6 +2,26 @@
   "name": "@agenticgraph/stream-react",
   "version": "0.1.0",
   "description": "React hooks and selectors for AgenticGraph streaming",
+  "keywords": [
+    "agenticgraph",
+    "laravel",
+    "streaming",
+    "sse",
+    "react",
+    "hooks",
+    "ai",
+    "llm"
+  ],
+  "homepage": "https://agenticgraph.dev/docs/stream-getting-started",
+  "bugs": {
+    "url": "https://github.com/shahzad-io/agenticgraph-stream-client/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/shahzad-io/agenticgraph-stream-client.git",
+    "directory": "packages/stream-react"
+  },
+  "license": "MIT",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -19,15 +39,18 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md",
+    "LICENSE"
   ],
   "scripts": {
     "build": "tsup",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "prepublishOnly": "npm run build"
   },
   "dependencies": {
-    "@agenticgraph/stream-client": "*"
+    "@agenticgraph/stream-client": "^0.1.0"
   },
   "peerDependencies": {
     "react": ">=18"
@@ -40,7 +63,10 @@
     "react-dom": "^19.1.0",
     "tsup": "^8.5.0",
     "typescript": "^5.8.3",
-    "vitest": "^3.2.4"
+    "vitest": "^5.0.5"
   },
-  "license": "MIT"
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public"
+  }
 }
