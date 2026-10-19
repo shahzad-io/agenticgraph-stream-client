@@ -1,6 +1,7 @@
 import {
   AgenticStream,
   executeResume,
+  appendFinalTextDelta,
   appendTextDelta,
   type ResumeHandler,
   type StreamErrorDetail,
@@ -20,7 +21,10 @@ export interface UseAgenticStreamOptions {
  * Vue composable — mirror of the React hook (same fields, same semantics, Vue refs).
  */
 export function useAgenticStream(options: UseAgenticStreamOptions): {
+  /** Every text_delta of the run, every step (the narration). */
   text: ReturnType<typeof ref<string>>;
+  /** Text of the current or last step; after a tool run, the final answer (LlmResponse::text on the server). */
+  finalText: ReturnType<typeof ref<string>>;
   status: ReturnType<typeof ref<StreamStatus>>;
   error: ReturnType<typeof ref<StreamErrorDetail | null>>;
   interrupt: ReturnType<typeof ref<StreamInterrupt | null>>;
@@ -29,6 +33,7 @@ export function useAgenticStream(options: UseAgenticStreamOptions): {
   client: ReturnType<typeof shallowRef<AgenticStream | null>>;
 } {
   const text = ref('');
+  const finalText = ref('');
   const status = ref<StreamStatus>('idle');
   const error = ref<StreamErrorDetail | null>(null);
   const interrupt = ref<StreamInterrupt | null>(null);
@@ -66,6 +71,7 @@ export function useAgenticStream(options: UseAgenticStreamOptions): {
     unsubEvents = stream.on((event) => {
       lastEvent.value = event;
       text.value = appendTextDelta(text.value, event);
+      finalText.value = appendFinalTextDelta(finalText.value, event);
     });
 
     unsubStatus = stream.onStatusChange((nextStatus, snapshot) => {
@@ -84,6 +90,7 @@ export function useAgenticStream(options: UseAgenticStreamOptions): {
     stream = null;
     client.value = null;
     text.value = '';
+    finalText.value = '';
     status.value = 'idle';
     error.value = null;
     interrupt.value = null;
@@ -115,6 +122,7 @@ export function useAgenticStream(options: UseAgenticStreamOptions): {
 
   return {
     text,
+    finalText,
     status,
     error,
     interrupt,

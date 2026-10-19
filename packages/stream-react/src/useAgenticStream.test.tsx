@@ -9,6 +9,7 @@ import {
   makeStreamCloseEvent,
   makeStreamResumeEvent,
   makeThinkingDeltaEvent,
+  makeMultiStepToolRunEvents,
   makeTextDeltaEvent,
   resetSeqCounter,
 } from '../../stream-client/src/testing/event-fixtures.js';
@@ -165,6 +166,21 @@ describe('mirror canonical sequence', () => {
       expect(hook.result.current.text).toBe('ab');
       expect(hook.result.current.status).toBe('interrupted');
       expect(hook.result.current.interrupt?.checkpointId).toBe('cp-123');
+    });
+  });
+
+  it('a two-step tool run: text holds every step, finalText the last; streaming after stream_end', async () => {
+    const { transport, hook } = await setup();
+
+    act(() => {
+      makeMultiStepToolRunEvents().forEach((event) => transport.emit(event));
+    });
+
+    await waitFor(() => {
+      expect(hook.result.current.text).toBe('Checking.Final.');
+      expect(hook.result.current.finalText).toBe('Final.');
+      expect(hook.result.current.status).toBe('streaming');
+      expect(hook.result.current.lastEvent?.eventType).toBe('stream_end');
     });
   });
 });

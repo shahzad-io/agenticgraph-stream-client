@@ -22,6 +22,8 @@ const { text, status, error } = useAgenticStream({
 </template>
 ```
 
+`text` holds every `text_delta` of the run (every step); `finalText` the current or last step, so after a tool run the final answer.
+
 Requires Vue 3.4+. Guide: [agenticgraph.dev/docs/stream-getting-started](https://agenticgraph.dev/docs/stream-getting-started); more in the [repository README](https://github.com/shahzad-io/agenticgraph-stream-client#readme).
 
 ## Compatibility

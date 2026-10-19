@@ -1,4 +1,4 @@
-import type { StreamCloseEvent, StreamReplayUnavailableEvent } from '../types/events.js';
+import type { StreamCloseEvent, StreamEvent, StreamReplayUnavailableEvent } from '../types/events.js';
 import type { WireEvent } from '../types/wire-body.js';
 import type { TextDeltaPayload } from '../types/payloads/prism.js';
 import type { NodeInterruptPayload } from '../types/payloads/framework.js';
@@ -219,4 +219,33 @@ export function makeToolCallEvent(
       timestamp: 1,
     },
   };
+}
+
+/**
+ * One streamed two-step tool run as the server sends it (B13b): stream_start, then per step step_start ...
+ * step_finish (each with its own message_id and usage), then stream_end with the cumulative usage.
+ */
+export function makeMultiStepToolRunEvents(): StreamEvent[] {
+  const usage = (prompt: number, completion: number) => ({
+    prompt_tokens: prompt,
+    completion_tokens: completion,
+    cache_write_input_tokens: null,
+    cache_read_input_tokens: null,
+    thought_tokens: null,
+  });
+  const event = (eventType: string, payload: unknown): StreamEvent =>
+    ({ eventType, ...BASE_WIRE, seq: nextSeq(), node_seq: 1, payload }) as StreamEvent;
+
+  return [
+    event('stream_start', { id: 'r', timestamp: 1, model: 'gpt-test', provider: 'openai', metadata: null }),
+    event('step_start', { id: 's1', timestamp: 1 }),
+    event('text_delta', { delta: 'Checking.', message_id: 'msg-1', timestamp: 1 }),
+    event('tool_call', { tool_id: 't1', tool_name: 'get_weather', arguments: { city: 'Lisbon' }, message_id: 'msg-1', reasoning_id: null, timestamp: 1 }),
+    event('tool_result', { tool_id: 't1', tool_name: 'get_weather', result: '{"high_c":24}', message_id: 'msg-1', success: true, error: null, timestamp: 1 }),
+    event('step_finish', { id: 's1-end', timestamp: 1, finish_reason: 'ToolCalls', usage: usage(10, 2) }),
+    event('step_start', { id: 's2', timestamp: 2 }),
+    event('text_delta', { delta: 'Final.', message_id: 'msg-2', timestamp: 2 }),
+    event('step_finish', { id: 's2-end', timestamp: 2, finish_reason: 'Stop', usage: usage(20, 5) }),
+    event('stream_end', { id: 'r-end', timestamp: 2, finish_reason: 'Stop', usage: usage(30, 7), citations: null, additional_content: {} }),
+  ];
 }

@@ -46,6 +46,8 @@ export type {
   ProviderToolEventPayload,
   StepFinishPayload,
   StepFinishUsage,
+  StreamEndPayload,
+  StreamStartPayload,
   StepStartPayload,
   TextCompletePayload,
   TextDeltaPayload,
@@ -80,6 +82,8 @@ export type {
   StepFinishEvent,
   StepStartEvent,
   StreamCloseEvent,
+  StreamEndEvent,
+  StreamStartEvent,
   StreamReplayUnavailableEvent,
   StreamErrorEvent,
   StreamEvent,
@@ -103,6 +107,7 @@ export type {
 } from './transport.js';
 export {
   activeNodeSelector,
+  appendFinalTextDelta,
   appendTextDelta,
   executeResume,
   nodeTextSelector,

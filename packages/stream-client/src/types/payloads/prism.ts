@@ -1,6 +1,6 @@
 /**
  * Semi-closed Prism content event payloads.
- * Version-pinned to Prism >=0.99.20 <0.100.0 — a future Prism upgrade may add types.
+ * Version-pinned to Prism 0.102; a future Prism upgrade may add types.
  * Field types match PrismStreamAdapter::resolvePayload emission (agenticgraph).
  */
 
@@ -68,15 +68,20 @@ export interface ThinkingCompletePayload {
   timestamp: number;
 }
 
+/** Once per model request, before the first step (Prism StreamStartEvent). */
+export interface StreamStartPayload {
+  id: string;
+  timestamp: number;
+  model: string;
+  provider: string;
+  /** array<string, mixed> | null */
+  metadata: Record<string, unknown> | null;
+}
+
+/** Once per step: one model call of a tool run (Prism StepStartEvent). */
 export interface StepStartPayload {
   id: string;
   timestamp: number;
-  /** StreamStartEvent mapping only */
-  model?: string;
-  /** StreamStartEvent mapping only */
-  provider?: string;
-  /** StreamStartEvent mapping only — array<string, mixed> | null */
-  metadata?: Record<string, unknown> | null;
 }
 
 export interface StepFinishUsage {
@@ -87,19 +92,27 @@ export interface StepFinishUsage {
   thought_tokens: number | null;
 }
 
+/** Once per step, with that step's finish reason and usage (Prism StepFinishEvent). */
 export interface StepFinishPayload {
   id: string;
   timestamp: number;
-  /** StreamEndEvent mapping only */
-  finish_reason?: string;
-  /** StreamEndEvent mapping only */
-  usage?: StepFinishUsage | null;
-  /**
-   * StreamEndEvent mapping only — provider-specific citation parts; inner shape varies.
-   */
-  citations?: unknown[] | null;
-  /** StreamEndEvent mapping only — array<string, mixed> */
-  additional_content?: Record<string, unknown>;
+  /** Enum name, e.g. `ToolCalls` or `Stop`; null when the provider gives none. */
+  finish_reason: string | null;
+  usage: StepFinishUsage | null;
+}
+
+/** Once per model request, after the last step, with the cumulative usage (Prism StreamEndEvent). */
+export interface StreamEndPayload {
+  id: string;
+  timestamp: number;
+  /** Enum name, e.g. `Stop`. */
+  finish_reason: string;
+  /** Sum of every step's usage. */
+  usage: StepFinishUsage | null;
+  /** Provider-specific citation parts; inner shape varies. */
+  citations: unknown[] | null;
+  /** array<string, mixed> */
+  additional_content: Record<string, unknown>;
 }
 
 export interface ProviderToolEventPayload {

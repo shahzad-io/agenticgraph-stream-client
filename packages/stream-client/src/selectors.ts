@@ -28,6 +28,18 @@ export function appendTextDelta(current: string, event: StreamEvent): string {
 }
 
 /**
+ * Text of the current or last step (hook `finalText` semantics): `step_start` resets it, `text_delta` appends.
+ * After a tool run it is the final step's text, as the server's `LlmResponse::text`.
+ */
+export function appendFinalTextDelta(current: string, event: StreamEvent): string {
+  if (event.eventType === 'step_start') {
+    return '';
+  }
+
+  return appendTextDelta(current, event);
+}
+
+/**
  * Resume orchestration (Option C): consumer owns HTTP via onResume; transport stays connected.
  * Post-resume events (stream_resume onward) arrive on the existing connection — no reconnect.
  */

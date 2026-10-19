@@ -10,6 +10,7 @@ import {
   makeStreamCloseEvent,
   makeStreamResumeEvent,
   makeThinkingDeltaEvent,
+  makeMultiStepToolRunEvents,
   makeTextDeltaEvent,
   resetSeqCounter,
 } from '../../stream-client/src/testing/event-fixtures.js';
@@ -213,6 +214,21 @@ describe('useAgenticStream (Vue)', () => {
     expect(result.text.value).toBe('ab');
     expect(result.status.value).toBe('interrupted');
     expect(result.interrupt.value?.checkpointId).toBe('cp-123');
+  });
+
+  it('a two-step tool run: text holds every step, finalText the last; streaming after stream_end', async () => {
+    const transport = new MockTransport();
+    const { result } = mountComposable(() => useAgenticStream({ transport }));
+    await waitForClient(result);
+
+    makeMultiStepToolRunEvents().forEach((event) => transport.emit(event));
+    await flushPromises();
+    await nextTick();
+
+    expect(result.text.value).toBe('Checking.Final.');
+    expect(result.finalText.value).toBe('Final.');
+    expect(result.status.value).toBe('streaming');
+    expect(result.lastEvent.value?.eventType).toBe('stream_end');
   });
 });
 

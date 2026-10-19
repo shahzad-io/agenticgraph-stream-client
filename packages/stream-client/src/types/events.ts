@@ -19,6 +19,8 @@ import type {
   ProviderToolEventPayload,
   StepFinishPayload,
   StepStartPayload,
+  StreamEndPayload,
+  StreamStartPayload,
   TextCompletePayload,
   TextDeltaPayload,
   TextStartPayload,
@@ -46,7 +48,8 @@ export type FrameworkWireEventType =
 export type FrameworkEventType = FrameworkWireEventType | 'stream_close';
 
 /**
- * Semi-closed Prism content types (pinned to Prism >=0.99.20 <0.100.0).
+ * Semi-closed Prism content types (pinned to Prism 0.102). One model request is `stream_start`, then
+ * `step_start` ... `step_finish` per step (tool runs have several), then `stream_end`.
  * Future Prism versions may add types — handled by {@link UnknownStreamEvent}.
  */
 export type PrismContentEventType =
@@ -58,8 +61,10 @@ export type PrismContentEventType =
   | 'thinking_start'
   | 'thinking_delta'
   | 'thinking_complete'
+  | 'stream_start'
   | 'step_start'
   | 'step_finish'
+  | 'stream_end'
   | 'provider_tool_event'
   | 'artifact'
   | 'error';
@@ -120,8 +125,10 @@ export type ToolResultEvent = WireEvent<'tool_result', ToolResultPayload>;
 export type ThinkingStartEvent = WireEvent<'thinking_start', ThinkingStartPayload>;
 export type ThinkingDeltaEvent = WireEvent<'thinking_delta', ThinkingDeltaPayload>;
 export type ThinkingCompleteEvent = WireEvent<'thinking_complete', ThinkingCompletePayload>;
+export type StreamStartEvent = WireEvent<'stream_start', StreamStartPayload>;
 export type StepStartEvent = WireEvent<'step_start', StepStartPayload>;
 export type StepFinishEvent = WireEvent<'step_finish', StepFinishPayload>;
+export type StreamEndEvent = WireEvent<'stream_end', StreamEndPayload>;
 export type ProviderToolEvent = WireEvent<'provider_tool_event', ProviderToolEventPayload>;
 export type ArtifactEvent = WireEvent<'artifact', ArtifactPayload>;
 export type PrismErrorEvent = WireEvent<'error', PrismErrorPayload>;
@@ -135,8 +142,10 @@ export type PrismContentEvent =
   | ThinkingStartEvent
   | ThinkingDeltaEvent
   | ThinkingCompleteEvent
+  | StreamStartEvent
   | StepStartEvent
   | StepFinishEvent
+  | StreamEndEvent
   | ProviderToolEvent
   | ArtifactEvent
   | PrismErrorEvent;

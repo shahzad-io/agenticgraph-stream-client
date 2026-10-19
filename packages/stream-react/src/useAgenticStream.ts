@@ -1,6 +1,7 @@
 import {
   AgenticStream,
   executeResume,
+  appendFinalTextDelta,
   appendTextDelta,
   type ResumeHandler,
   type StreamErrorDetail,
@@ -17,7 +18,10 @@ export interface UseAgenticStreamOptions {
 }
 
 export interface UseAgenticStreamReturn {
+  /** Every text_delta of the run, every step (the narration). */
   text: string;
+  /** Text of the current or last step; after a tool run, the final answer (LlmResponse::text on the server). */
+  finalText: string;
   status: StreamStatus;
   error: StreamErrorDetail | null;
   interrupt: StreamInterrupt | null;
@@ -37,6 +41,7 @@ export function useAgenticStream(options: UseAgenticStreamOptions): UseAgenticSt
   const { transport, onResume } = options;
 
   const [text, setText] = useState('');
+  const [finalText, setFinalText] = useState('');
   const [status, setStatus] = useState<StreamStatus>('idle');
   const [error, setError] = useState<StreamErrorDetail | null>(null);
   const [interrupt, setInterrupt] = useState<StreamInterrupt | null>(null);
@@ -53,6 +58,7 @@ export function useAgenticStream(options: UseAgenticStreamOptions): UseAgenticSt
     let cancelled = false;
 
     setText('');
+    setFinalText('');
     setStatus('idle');
     setError(null);
     setInterrupt(null);
@@ -85,6 +91,7 @@ export function useAgenticStream(options: UseAgenticStreamOptions): UseAgenticSt
       unsubEvents = stream.on((event) => {
         setLastEvent(event);
         setText((current) => appendTextDelta(current, event));
+        setFinalText((current) => appendFinalTextDelta(current, event));
       });
 
       unsubStatus = stream.onStatusChange((nextStatus, snapshot) => {
@@ -115,6 +122,7 @@ export function useAgenticStream(options: UseAgenticStreamOptions): UseAgenticSt
 
   return {
     text,
+    finalText,
     status,
     error,
     interrupt,

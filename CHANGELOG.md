@@ -2,6 +2,14 @@
 
 ## 0.1.0 (unreleased)
 
+### BREAKING (B13b B: multi-step streaming)
+Needs the agenticgraph core from the same release (wire contract v1.1 B13b amendment).
+
+- New Prism content types `stream_start` (`StreamStartPayload`: `model`, `provider`, `metadata`) and `stream_end` (`StreamEndPayload`: `finish_reason`, cumulative `usage`, `citations`, `additional_content`), with `StreamStartEvent` and `StreamEndEvent`. `SSETransport` and `EchoTransport` listen to them by default.
+- `StepStartPayload` is `{ id, timestamp }` only. `StepFinishPayload` has required `finish_reason` (`string | null`) and `usage` (that step's); `citations` and `additional_content` moved to `StreamEndPayload`. Code that read `usage` from the last `step_finish` reads one step's: use `stream_end`.
+- A tool run now streams one `step_start` and `step_finish` pair per step, each step with its own `message_id`. The hooks' `text` keeps every step's deltas, in order (unchanged rule); `stream_end` does not change `status`.
+- New: `finalText` on the React and Vue hooks, the text of the current or last step (`step_start` resets it), so after a tool run the final answer, like the server's `LlmResponse::text`. New helper `appendFinalTextDelta`.
+
 ### Release metadata (B11 session C)
 
 - Each package: `publishConfig.access: public`, a `prepublishOnly` build, its own README and LICENSE (published with `dist`), `repository` (with its directory), `homepage`, `bugs`, `keywords` and `sideEffects` (`false`; the client keeps `dist/index.global.js`, which sets a global). React and Vue depend on `@agenticgraph/stream-client` `^0.1.0` (was `*`). The stray root dependency on the client is removed.

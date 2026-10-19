@@ -121,6 +121,16 @@ describe('SSETransport', () => {
     expect(transport.getLastSeq()).toBeNull();
   });
 
+  it('delivers stream_start and stream_end around the step events of a multi-step run', async () => {
+    const { transport, received, send, last } = setup();
+
+    await transport.connect();
+    last().open();
+    ['stream_start', 'step_start', 'step_finish', 'step_start', 'step_finish', 'stream_end'].forEach((type, i) => send(last(), i + 1, type, { id: String(i), timestamp: 1 }));
+
+    expect(received.map((event) => event.eventType)).toEqual(['stream_start', 'step_start', 'step_finish', 'step_start', 'step_finish', 'stream_end']);
+  });
+
   it('disconnect resets lastSeq so a subsequent connect sends no cursor', async () => {
     const { transport, fakes, send, last } = setup();
 

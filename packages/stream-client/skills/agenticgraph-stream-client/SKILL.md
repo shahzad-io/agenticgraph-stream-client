@@ -110,7 +110,9 @@ The file is an IIFE with `sideEffects` set for it. Import the ESM or CJS build i
 ## Selectors and helpers
 
 - `nodeTextSelector(node)`, `activeNodeSelector`, `thinkingSelector`, `toolCallSelector`: derived views of the events. The React and Vue hooks take them through `useStreamSelector`.
-- `appendTextDelta(current, event)`: appends a `text_delta` to a string. Other events return the string unchanged.
+- `appendTextDelta(current, event)`: appends a `text_delta` to a string. Other events return the string unchanged. The hooks' `text` is built with it, so it holds every step of a tool run (the narration).
+- `appendFinalTextDelta(current, event)`: the same, but `step_start` resets it to `''`. The hooks' `finalText` is built with it: the current or last step, so after a tool run the final answer, like the server's `run()->text`. Decide in the app which of `text` and `finalText` to persist.
+- One model request is `stream_start`, then `step_start` ... `step_finish` per step, then `stream_end`. `step_finish.payload` has that step's `finish_reason` and `usage`; `stream_end.payload` the request's and the cumulative `usage`. `stream_end` is not a terminal: the run goes on.
 - `executeResume(client, decision, onResume)`: calls your resume handler with the decision and the current `interrupt`. It throws when no handler is given.
 
 ## Tests
