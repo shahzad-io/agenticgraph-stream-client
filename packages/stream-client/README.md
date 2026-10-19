@@ -17,7 +17,7 @@ const stream = await AgenticStream.connect({
 stream.on('text_delta', (event) => console.log(event.payload.delta));
 ```
 
-`laravel-echo` is an optional peer dependency, needed only for the Echo transport. React and Vue bindings: [@agenticgraph/stream-react](https://www.npmjs.com/package/@agenticgraph/stream-react), [@agenticgraph/stream-vue](https://www.npmjs.com/package/@agenticgraph/stream-vue).
+`laravel-echo` is an optional peer dependency, needed only for the Echo transport. An agent skill for this package (connect, reconnect, stop reasons, resolveUrl, signed URLs, the script-tag build) ships with it: [skills/agenticgraph-stream-client/SKILL.md](skills/agenticgraph-stream-client/SKILL.md). React and Vue bindings: [@agenticgraph/stream-react](https://www.npmjs.com/package/@agenticgraph/stream-react), [@agenticgraph/stream-vue](https://www.npmjs.com/package/@agenticgraph/stream-vue).
 
 Guide: [agenticgraph.dev/docs/stream-getting-started](https://agenticgraph.dev/docs/stream-getting-started). Reconnect, `resolveUrl`, the script-tag build and final state: the [repository README](https://github.com/shahzad-io/agenticgraph-stream-client#readme).
 

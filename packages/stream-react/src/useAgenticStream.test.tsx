@@ -441,3 +441,46 @@ describe('stream text render diagnostic (React)', () => {
     expect(textRenderLog.length).toBeGreaterThan(1);
   });
 });
+
+function transportFailingBeforeOpen() {
+  const sources: EventSourceLike[] = [];
+  const transport = new SSETransport({
+    url: '/agentic-graph/streams/stream-fail',
+    maxAttempts: 0,
+    eventSourceFactory: (url) => {
+      const source: EventSourceLike = {
+        url,
+        onopen: null,
+        onerror: null,
+        readyState: 0,
+        addEventListener() {},
+        removeEventListener() {},
+        close() {},
+      };
+      sources.push(source);
+
+      return source;
+    },
+  });
+
+  return { transport, sources };
+}
+
+describe('useAgenticStream when connect() rejects (React)', () => {
+  it('sets status error and a connection error instead of an unhandled rejection', async () => {
+    const { transport, sources } = transportFailingBeforeOpen();
+    const { result } = renderHook(() => useAgenticStream({ transport }));
+
+    await waitFor(() => expect(sources).toHaveLength(1));
+    act(() => sources[0]!.onerror?.(new Event('error')));
+
+    await waitFor(() => {
+      expect(result.current.status).toBe('error');
+      expect(result.current.error).toEqual({
+        kind: 'connection',
+        message: 'Stream transport failed to connect',
+      });
+    });
+    expect(result.current.client).toBeNull();
+  });
+});

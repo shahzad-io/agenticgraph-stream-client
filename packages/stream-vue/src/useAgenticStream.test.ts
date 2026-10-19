@@ -1,7 +1,7 @@
 import { mount, flushPromises } from '@vue/test-utils';
 import { defineComponent, nextTick } from 'vue';
 import { describe, expect, it, vi } from 'vitest';
-import { MockTransport } from '@agenticgraph/stream-client';
+import { MockTransport, SSETransport, type EventSourceLike } from '@agenticgraph/stream-client';
 import {
   makeExecutionTerminalEvent,
   makeNodeCompleteEvent,
@@ -213,6 +213,44 @@ describe('useAgenticStream (Vue)', () => {
     expect(result.text.value).toBe('ab');
     expect(result.status.value).toBe('interrupted');
     expect(result.interrupt.value?.checkpointId).toBe('cp-123');
+  });
+});
+
+describe('useAgenticStream when connect() rejects (Vue)', () => {
+  it('sets status error and a connection error instead of an unhandled rejection', async () => {
+    const sources: EventSourceLike[] = [];
+    const transport = new SSETransport({
+      url: '/agentic-graph/streams/stream-fail',
+      maxAttempts: 0,
+      eventSourceFactory: (url) => {
+        const source: EventSourceLike = {
+          url,
+          onopen: null,
+          onerror: null,
+          readyState: 0,
+          addEventListener() {},
+          removeEventListener() {},
+          close() {},
+        };
+        sources.push(source);
+
+        return source;
+      },
+    });
+    const { result } = mountComposable(() => useAgenticStream({ transport }));
+
+    await flushPromises();
+    expect(sources).toHaveLength(1);
+    sources[0]!.onerror?.(new Event('error'));
+    await flushPromises();
+    await nextTick();
+
+    expect(result.status.value).toBe('error');
+    expect(result.error.value).toEqual({
+      kind: 'connection',
+      message: 'Stream transport failed to connect',
+    });
+    expect(result.client.value).toBeNull();
   });
 });
 

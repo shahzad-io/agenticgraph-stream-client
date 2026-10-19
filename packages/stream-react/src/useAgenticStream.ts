@@ -60,7 +60,16 @@ export function useAgenticStream(options: UseAgenticStreamOptions): UseAgenticSt
     setClient(null);
 
     void (async () => {
-      stream = await AgenticStream.connect({ transport });
+      try {
+        stream = await AgenticStream.connect({ transport });
+      } catch (failure) {
+        if (!cancelled) {
+          setStatus('error');
+          setError({ kind: 'connection', message: failure instanceof Error ? failure.message : String(failure) });
+        }
+
+        return;
+      }
 
       if (cancelled) {
         await stream.disconnect();
