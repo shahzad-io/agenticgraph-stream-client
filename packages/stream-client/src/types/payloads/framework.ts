@@ -1,6 +1,6 @@
 /**
  * Framework telemetry injected into lifecycle event payloads by StreamLifecycleEventEmitter.
- * Clients may ignore `payload.stream` — not part of the frozen public promise.
+ * Clients may ignore `payload.stream` - not part of the frozen public promise.
  */
 export interface LifecycleStreamTelemetry {
   seq: number;
@@ -71,7 +71,7 @@ export interface NodeInterruptPayload {
   node_name: string;
   reason: string;
   checkpoint_id: string;
-  /** Present when the node returns non-null from getInterruptPayload() — author-defined review content. */
+  /** Present when the node returns non-null from getInterruptPayload() - author-defined review content. */
   interrupt_payload?: unknown;
   stream?: LifecycleStreamTelemetry;
 }
@@ -108,7 +108,7 @@ export interface ExecutionTerminalPayload {
 }
 
 /**
- * Broadcast terminal — minimal payload, NOT the 9-field wire envelope.
+ * Broadcast terminal - minimal payload, NOT the 9-field wire envelope.
  * @see WIRE-CONTRACT.md § Terminals
  */
 export interface StreamClosePayload {

@@ -38,7 +38,7 @@ const DEFAULT_EVENT_TYPES = [
 type WireHandler = (eventName: string, body: unknown) => void;
 
 /**
- * Broadcast transport — wraps a consumer-provided Echo instance (never creates Echo).
+ * Broadcast transport - wraps a consumer-provided Echo instance (never creates Echo).
  * Events during a connection drop are lost (fire-and-forget broadcast).
  */
 export class EchoTransport implements StreamTransport {
@@ -109,7 +109,7 @@ export class EchoTransport implements StreamTransport {
     };
   }
 
-  /** @internal Test hook — handle a raw broadcast delivery. */
+  /** @internal Test hook - handle a raw broadcast delivery. */
   _handleBroadcast(eventName: string, body: unknown): void {
     this.deliverWireEvent(eventName, body);
   }

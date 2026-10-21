@@ -41,7 +41,7 @@ export function appendFinalTextDelta(current: string, event: StreamEvent): strin
 
 /**
  * Resume orchestration (Option C): consumer owns HTTP via onResume; transport stays connected.
- * Post-resume events (stream_resume onward) arrive on the existing connection — no reconnect.
+ * Post-resume events (stream_resume onward) arrive on the existing connection - no reconnect.
  */
 export async function executeResume(
   client: AgenticStream,
@@ -50,7 +50,7 @@ export async function executeResume(
 ): Promise<void> {
   if (onResume === undefined) {
     throw new Error(
-      'useAgenticStream: resume() requires onResume — provide your app resume HTTP call in hook options',
+      'useAgenticStream: resume() requires onResume - provide your app resume HTTP call in hook options',
     );
   }
 

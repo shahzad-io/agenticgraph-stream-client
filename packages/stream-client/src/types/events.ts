@@ -50,7 +50,7 @@ export type FrameworkEventType = FrameworkWireEventType | 'stream_close';
 /**
  * Semi-closed Prism content types (pinned to Prism 0.102). One model request is `stream_start`, then
  * `step_start` ... `step_finish` per step (tool runs have several), then `stream_end`.
- * Future Prism versions may add types — handled by {@link UnknownStreamEvent}.
+ * Future Prism versions may add types - handled by {@link UnknownStreamEvent}.
  */
 export type PrismContentEventType =
   | 'text_start'
@@ -85,7 +85,7 @@ export type ExecutionTerminalEvent = WireEvent<'execution_terminal', ExecutionTe
 export type StreamErrorEvent = WireEvent<'stream_error', StreamErrorPayload>;
 
 /**
- * Broadcast terminal — NOT the 9-field wire envelope.
+ * Broadcast terminal - NOT the 9-field wire envelope.
  * @see WIRE-CONTRACT.md § Terminals
  */
 export type StreamCloseEvent = {
@@ -157,7 +157,7 @@ export type KnownStreamEvent =
   | PrismContentEvent;
 
 /**
- * Author / unknown future Prism types — same 9-field wire envelope, opaque payload.
+ * Author / unknown future Prism types - same 9-field wire envelope, opaque payload.
  * `AbstractNode::streamEvent(string $type, array $payload)` and future Prism additions.
  *
  * Cannot participate in a discriminated union without breaking payload narrowing on known

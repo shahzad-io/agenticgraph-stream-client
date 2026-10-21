@@ -56,14 +56,14 @@ export interface ThinkingStartPayload {
 export interface ThinkingDeltaPayload {
   id: string;
   delta: string;
-  /** array<string, mixed> | null — ThinkingEvent::$summary */
+  /** array<string, mixed> | null - ThinkingEvent::$summary */
   summary: Record<string, unknown> | null;
   timestamp: number;
 }
 
 export interface ThinkingCompletePayload {
   id: string;
-  /** array<string, mixed> | null — ThinkingCompleteEvent::$summary */
+  /** array<string, mixed> | null - ThinkingCompleteEvent::$summary */
   summary: Record<string, unknown> | null;
   timestamp: number;
 }
@@ -141,7 +141,7 @@ export interface CitationArtifact {
 }
 
 /**
- * CitationEvent mapping — adapter hardcodes tool_call_id/tool_name as null.
+ * CitationEvent mapping - adapter hardcodes tool_call_id/tool_name as null.
  */
 export interface ArtifactPayload {
   tool_call_id: null;

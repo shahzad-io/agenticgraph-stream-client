@@ -34,7 +34,7 @@ export interface UseAgenticStreamReturn {
  * React hook bridging {@link AgenticStream} into reactive state.
  *
  * Text accumulation uses functional `setText` updates (one state slot, O(1) per delta).
- * Status/error/interrupt sync from the core via `onStatusChange` — not reimplemented here.
+ * Status/error/interrupt sync from the core via `onStatusChange` - not reimplemented here.
  * `lastEvent` updates on every event (intentional; use selectors for derived state).
  */
 export function useAgenticStream(options: UseAgenticStreamOptions): UseAgenticStreamReturn {

@@ -18,7 +18,7 @@ export interface UseAgenticStreamOptions {
 }
 
 /**
- * Vue composable — mirror of the React hook (same fields, same semantics, Vue refs).
+ * Vue composable - mirror of the React hook (same fields, same semantics, Vue refs).
  */
 export function useAgenticStream(options: UseAgenticStreamOptions): {
   /** Every text_delta of the run, every step (the narration). */

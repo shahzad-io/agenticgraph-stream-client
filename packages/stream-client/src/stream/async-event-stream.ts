@@ -14,7 +14,7 @@ interface IteratorSink {
 }
 
 /**
- * Single internal async event stream — the source of truth for all consumption APIs.
+ * Single internal async event stream - the source of truth for all consumption APIs.
  * Transport events enter via {@link dispatch}; `.on`, `.subscribe`, and `.events()` all read from here.
  */
 export class AsyncEventStream {
@@ -63,7 +63,7 @@ export class AsyncEventStream {
 
   /**
    * Returns a fresh async iterable. Each iterator receives events from the moment it is created
-   * forward (no replay). Multiple concurrent `.events()` iterators are supported — each gets
+   * forward (no replay). Multiple concurrent `.events()` iterators are supported - each gets
    * every event dispatched after its creation.
    */
   createIterable(): AsyncIterable<StreamEvent> {

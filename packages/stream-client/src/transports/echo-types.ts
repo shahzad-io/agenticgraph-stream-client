@@ -1,5 +1,5 @@
 /**
- * Minimal Echo surface — consumer provides a configured Laravel Echo instance.
+ * Minimal Echo surface - consumer provides a configured Laravel Echo instance.
  * Echo is NOT bundled; this is type-only structural typing.
  */
 export interface EchoChannel {

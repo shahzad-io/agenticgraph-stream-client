@@ -109,7 +109,7 @@ describe('AgenticStream', () => {
     await stream.disconnect();
   });
 
-  it('proves one source of truth — one emit dispatches once to multiple consumers', async () => {
+  it('proves one source of truth - one emit dispatches once to multiple consumers', async () => {
     const transport = new MockTransport();
     const stream = await AgenticStream.connect({ transport });
     let onAllCount = 0;

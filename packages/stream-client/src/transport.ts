@@ -22,7 +22,7 @@ export type StreamTransportStopReason =
   | 'failed';
 
 /**
- * Transport abstraction — core depends on this interface, not on Laravel Echo.
+ * Transport abstraction - core depends on this interface, not on Laravel Echo.
  * Implementations: EchoTransport, SSETransport, MockTransport (Phase 1).
  */
 export interface StreamTransport {

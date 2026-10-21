@@ -1,6 +1,6 @@
 /**
  * Frozen v1.0 wire-body field names emitted by StreamEventEnvelope::toWireArray().
- * `type` is intentionally excluded — it is carried by the transport event name.
+ * `type` is intentionally excluded - it is carried by the transport event name.
  */
 export const FROZEN_WIRE_BODY_KEYS = [
   'stream_id',
@@ -18,7 +18,7 @@ export type FrozenWireBodyKey = (typeof FROZEN_WIRE_BODY_KEYS)[number];
 
 /**
  * The 9 frozen snake_case fields in every standard wire envelope.
- * `type` / `eventType` is external — NOT a key in this body.
+ * `type` / `eventType` is external - NOT a key in this body.
  */
 export interface StreamWireBody {
   stream_id: string;

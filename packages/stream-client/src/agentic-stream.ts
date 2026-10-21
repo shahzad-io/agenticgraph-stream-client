@@ -51,7 +51,7 @@ export class AgenticStream {
   /**
    * Connect a transport and return the stream.
    *
-   * Resolves only once the transport reports `connected` — use this before kicking off
+   * Resolves only once the transport reports `connected` - use this before kicking off
    * a client-initiated broadcast flow so the subscription is live first. Rejects when the
    * transport reports `failed` first.
    *

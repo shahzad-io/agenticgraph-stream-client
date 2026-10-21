@@ -23,7 +23,7 @@ export function createInitialAdapterSnapshot(): AdapterSnapshot {
 }
 
 /**
- * Pure reducer for mirror tests — applies one event + core getters semantics.
+ * Pure reducer for mirror tests - applies one event + core getters semantics.
  * Adapters sync status/error/interrupt from the core client, not by reimplementing rules.
  */
 export function reduceAdapterEvent(

@@ -180,7 +180,7 @@ export class SSETransport implements StreamTransport {
     return this.lastSeq;
   }
 
-  /** @internal Test hook — deliver a parsed SSE message. */
+  /** @internal Test hook - deliver a parsed SSE message. */
   _handleSseMessage(eventType: string, data: unknown): void {
     this.deliverParsed(eventType, data);
   }
