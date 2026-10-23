@@ -443,7 +443,7 @@ describe('connect() awaits connected state', () => {
   });
 });
 
-describe('B2 status model and connection states', () => {
+describe('status model and connection states', () => {
   it('moves from interrupted back to streaming on stream_resume and clears the interrupt', async () => {
     const transport = new MockTransport();
     const stream = await AgenticStream.connect({ transport });

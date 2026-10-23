@@ -222,7 +222,7 @@ export function makeToolCallEvent(
 }
 
 /**
- * One streamed two-step tool run as the server sends it (B13b): stream_start, then per step step_start ...
+ * One streamed two-step tool run as the server sends it: stream_start, then per step step_start ...
  * step_finish (each with its own message_id and usage), then stream_end with the cumulative usage.
  */
 export function makeMultiStepToolRunEvents(): StreamEvent[] {

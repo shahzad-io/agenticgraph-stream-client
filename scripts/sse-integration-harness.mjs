@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 /**
- * Live SSE harness.
+ * Live SSE harness: the stream client against a real Laravel app with AgenticGraph, checks 1 to 5.
  *
- * Starts laravel-app itself: two `php -S` servers from public/ (normal and short
+ * Starts the app itself: two `php -S` servers from its public/ (normal and short
  * max_duration), one real queue worker, Redis DB 5/6 flushed first. Then reads real runs
- * of the linear-sse-demo graph through SSETransport + AgenticStream and compares every
- * client run with the stored stream (seq by seq, and the text).
+ * of the app's linear SSE demo graph through SSETransport + AgenticStream and compares every
+ * client run with the stored stream (seq by seq, and the text). The app must serve
+ * POST /demo/linear-sse/start, POST /demo/linear-sse/{execution}/resume and GET /up.
  *
  *   1. live run read while it streams
  *   2. planned closes during a run (short max_duration)
@@ -17,30 +18,37 @@
  *   KEEP_SERVERS=1 npm run integration:sse     keeps them up after the checks
  *   node scripts/sse-integration-harness.mjs stored <stream_url>   prints the stored stream
  *
- * Needs: OPENAI_API_KEY in laravel-app/.env, Redis on 127.0.0.1:6379. Report also
- * written to $AG2_SCRATCH/b2-harness-report.json (default /tmp/ag2).
+ * Environment:
+ *   SSE_APP_PATH     the Laravel app folder (default ../laravel-app next to this repo)
+ *   SSE_APP_HOST     host the servers bind to and the client calls (default 127.0.0.1)
+ *   SSE_APP_PORT     first of three ports: normal server, short server, proxy (default 8711)
+ *   SSE_HARNESS_OUT  folder for the JSON report (default <os tmpdir>/agenticgraph-sse-harness)
+ *
+ * Needs: an LLM key in the app's .env, Redis on 127.0.0.1:6379.
  */
 
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import net from 'node:net';
+import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { AgenticStream, SSETransport, parseSseFrame } from '@agenticgraph/stream-client';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const SSE_APP_DIR = resolve(__dirname, '../../laravel-app');
-const SCRATCH = process.env.AG2_SCRATCH ?? '/tmp/ag2';
+const APP_DIR = resolve(process.env.SSE_APP_PATH ?? resolve(__dirname, '../../laravel-app'));
+const HOST = process.env.SSE_APP_HOST ?? '127.0.0.1';
+const SCRATCH = process.env.SSE_HARNESS_OUT ?? resolve(tmpdir(), 'agenticgraph-sse-harness');
 const TOPIC = process.env.SSE_DEMO_TOPIC ?? 'how server-sent events reconnect after a dropped connection';
 
-const LONG_PORT = 8711;
-const SHORT_PORT = 8712;
-const PROXY_PORT = 8713;
+const LONG_PORT = Number(process.env.SSE_APP_PORT ?? 8711);
+const SHORT_PORT = LONG_PORT + 1;
+const PROXY_PORT = LONG_PORT + 2;
 const SHORT_MAX_DURATION = '0.5';
 const SHORT_RETRY_MS = '200';
 
-const LONG = `http://127.0.0.1:${LONG_PORT}`;
-const SHORT = `http://127.0.0.1:${SHORT_PORT}`;
+const LONG = `http://${HOST}:${LONG_PORT}`;
+const SHORT = `http://${HOST}:${SHORT_PORT}`;
 
 /** Every PHP process: Redis DB 5/6, Redis queue and stream store, no tracing. */
 const PHP_ENV = {
@@ -100,8 +108,8 @@ function startPhp(name, args, cwd, env) {
 function startServer(port, extraEnv) {
   return startPhp(
     `php -S :${port}`,
-    ['-S', `127.0.0.1:${port}`, '../vendor/laravel/framework/src/Illuminate/Foundation/resources/server.php'],
-    resolve(SSE_APP_DIR, 'public'),
+    ['-S', `${HOST}:${port}`, '../vendor/laravel/framework/src/Illuminate/Foundation/resources/server.php'],
+    resolve(APP_DIR, 'public'),
     { ...PHP_ENV, ...extraEnv },
   );
 }
@@ -149,7 +157,7 @@ function createProxy(listenPort, targetPort) {
     }
 
     proxy.accepted += 1;
-    const upstream = net.connect(targetPort, '127.0.0.1');
+    const upstream = net.connect(targetPort, HOST);
     const pair = { client, upstream };
     const end = () => {
       client.destroy();
@@ -164,7 +172,7 @@ function createProxy(listenPort, targetPort) {
     upstream.on('error', end).on('close', end);
   });
 
-  proxy.listen = () => new Promise((done) => server.listen(listenPort, '127.0.0.1', done));
+  proxy.listen = () => new Promise((done) => server.listen(listenPort, HOST, done));
   proxy.close = () => server.close();
   proxy.dropAll = () => {
     for (const pair of pairs) {
@@ -519,7 +527,7 @@ async function check5(streamUrl) {
   const streamId = new URL(streamUrl).pathname.split('/').pop();
   const truncate = spawnSync('php', ['artisan', 'tinker', '--execute',
     `$s = app(\\Shahzad\\AgenticGraph\\Streaming\\Contracts\\StreamStoreInterface::class); $s->truncate("${streamId}", 6); echo $s->firstSeq("${streamId}");`],
-  { cwd: SSE_APP_DIR, env: PHP_ENV, encoding: 'utf8' });
+  { cwd: APP_DIR, env: PHP_ENV, encoding: 'utf8' });
   const firstSeq = Number(String(truncate.stdout).trim().split('\n').pop());
 
   const run = await (await follow(`${streamUrl}?cursor=2`, { timeoutMs: 15_000 })).done;
@@ -543,6 +551,10 @@ async function check5(streamUrl) {
 // --- main ------------------------------------------------------------------------------
 
 async function main() {
+  if (!existsSync(resolve(APP_DIR, 'artisan'))) {
+    throw new Error(`No Laravel app at ${APP_DIR}: set SSE_APP_PATH to the app folder`);
+  }
+
   if (process.argv[2] === 'stored') {
     const stored = await readStored(process.argv[3]);
     console.log(JSON.stringify({ text: textOf(stored), seqs: seqsOf(stored), types: stored.map((e) => e.eventType) }));
@@ -557,7 +569,7 @@ async function main() {
     AGENTICGRAPH_STREAM_SSE_MAX_DURATION: SHORT_MAX_DURATION,
     AGENTICGRAPH_STREAM_SSE_RETRY_MS: SHORT_RETRY_MS,
   });
-  startPhp('queue worker', ['artisan', 'queue:work', 'redis', '--queue=agenticgraph,default', '--tries=1', '--timeout=0'], SSE_APP_DIR, PHP_ENV);
+  startPhp('queue worker', ['artisan', 'queue:work', 'redis', '--queue=agenticgraph,default', '--tries=1', '--timeout=0'], APP_DIR, PHP_ENV);
   await Promise.all([waitForServer(LONG), waitForServer(SHORT)]);
   console.log(`servers up: ${LONG} (max_duration default), ${SHORT} (max_duration ${SHORT_MAX_DURATION}s, retry ${SHORT_RETRY_MS} ms)`);
 
@@ -568,11 +580,11 @@ async function main() {
   await check('5 gone cursor (truncated stream)', () => check5(results['1 live run read while it streams'].streamUrl));
 
   const report = { date: new Date().toISOString(), long: LONG, short: SHORT, results };
-  writeFileSync(`${SCRATCH}/b2-harness-report.json`, JSON.stringify(report, null, 2));
+  writeFileSync(`${SCRATCH}/sse-harness-report.json`, JSON.stringify(report, null, 2));
   console.log(JSON.stringify(results, null, 2));
 
   const failed = Object.values(results).filter((r) => !r.pass).length;
-  console.log(`\nVERDICT: ${failed === 0 ? 'ALL CHECKS PASS' : `${failed} CHECK(S) FAILED`} (report: ${SCRATCH}/b2-harness-report.json)`);
+  console.log(`\nVERDICT: ${failed === 0 ? 'ALL CHECKS PASS' : `${failed} CHECK(S) FAILED`} (report: ${SCRATCH}/sse-harness-report.json)`);
   process.exitCode = failed === 0 ? 0 : 1;
 
   if (process.env.KEEP_SERVERS === '1') {
