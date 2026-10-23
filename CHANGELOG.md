@@ -2,37 +2,17 @@
 
 ## 0.1.0 (unreleased)
 
-### BREAKING (multi-step streaming)
-Needs AgenticGraph core 0.2.0 (wire contract v1.1, multi-step streaming amendment).
+Initial release of `@agenticgraph/stream-client`, `@agenticgraph/stream-react` and `@agenticgraph/stream-vue`: show AgenticGraph runs live in the browser or Node.js.
 
-- New Prism content types `stream_start` (`StreamStartPayload`: `model`, `provider`, `metadata`) and `stream_end` (`StreamEndPayload`: `finish_reason`, cumulative `usage`, `citations`, `additional_content`), with `StreamStartEvent` and `StreamEndEvent`. `SSETransport` and `EchoTransport` listen to them by default.
-- `StepStartPayload` is `{ id, timestamp }` only. `StepFinishPayload` has required `finish_reason` (`string | null`) and `usage` (that step's); `citations` and `additional_content` moved to `StreamEndPayload`. Code that read `usage` from the last `step_finish` reads one step's: use `stream_end`.
-- A tool run now streams one `step_start` and `step_finish` pair per step, each step with its own `message_id`. The hooks' `text` keeps every step's deltas, in order (unchanged rule); `stream_end` does not change `status`.
-- New: `finalText` on the React and Vue hooks, the text of the current or last step (`step_start` resets it), so after a tool run the final answer, like the server's `LlmResponse::text`. New helper `appendFinalTextDelta`.
+- **Typed events** for AgenticGraph's stream wire contract v1.1: graph and node lifecycle, interrupts, errors, text deltas, tool calls, thinking, model steps and the final `execution_terminal`.
+- **`AgenticStream`:** subscribe with `.on()` and follow `status`, `error` and the pending `interrupt`; `executeResume()` sends the decision through your own resume endpoint.
+- **SSE transport** that reconnects by itself: resumes from the last event (nothing missed, nothing shown twice), backs off with jitter, follows the server's planned reconnects, and keeps the connection through an approval wait. `resolveUrl` supports signed or expiring stream URLs.
+- **Laravel Echo transport** for broadcast streams, and **`MockTransport`** for tests.
+- **Selectors** for the active node, accumulated text, the final answer after a tool run (`finalText`), tool calls and thinking.
+- **React and Vue adapters:** `useAgenticStream` (text, final text, status, error, interrupt, resume) and `useStreamSelector`.
+- **Browser build:** one `<script>` tag, global `AgenticGraphStream`, about 5 KB gzipped, no dependencies.
+- `final_state` is typed `Record<string, unknown> | null`: it is `null` unless the server exposes it.
 
-### Release metadata
+**Requirements:** Node.js 18+. React 18+ for `stream-react`, Vue 3.4+ for `stream-vue`, `laravel-echo` 1.16+ only for the Echo transport.
 
-- Each package: `publishConfig.access: public`, a `prepublishOnly` build, its own README and LICENSE (published with `dist`), `repository` (with its directory), `homepage`, `bugs`, `keywords` and `sideEffects` (`false`; the client keeps `dist/index.global.js`, which sets a global). React and Vue depend on `@agenticgraph/stream-client` `^0.1.0` (was `*`). The stray root dependency on the client is removed.
-- Dev: vitest 5, vue 3.5.44 (advisory), lock refreshed. Each package declares `engines.node` `>=18`. `npm audit` leaves one low esbuild advisory (Windows dev server only) that needs tsup 9, a major.
-
-### BREAKING (SSE reconnect)
-Needs AgenticGraph core 0.2.0 (wire contract v1.1 amendment: SSE control events).
-
-- `SSETransport` reconnects by itself. On an error or the end of a response it closes the `EventSource` at once (no native browser retry) and reopens with `?cursor=<lastSeq>`, with exponential backoff and jitter. New options: `maxAttempts` (default 5, consecutive failures only; a successful open or a planned server close resets it), `baseDelayMs` (500), `maxDelayMs` (10000), and `resolveUrl(lastSeq)` (async, called before each reconnect for signed or expiring URLs).
-- `useCursorQuery` is removed. The cursor is always sent as `?cursor=` (a new `EventSource` cannot set `Last-Event-ID`).
-- New connection state `failed` on `StreamTransportConnectionState`: the transport gave up after `maxAttempts`. `AgenticStream` sets `status: 'error'` with `error.kind === 'connection'`, and `AgenticStream.connect()` rejects if it happens before the first open. Exhaustive `switch` statements over the state need a new case.
-- `connected` is reported on the real `open` event, not when the `EventSource` is created. Test doubles must fire `onopen`.
-- The transport stops on an `execution_terminal` with `completed` or `failed` and on control `replay_unavailable`. An `interrupted` terminal keeps the connection open for the resumed segment.
-- Duplicates: stored events with `seq <= lastSeq` are dropped. Control events (heartbeat, reconnect, replay_unavailable) are recognized by their `control` key; they never move `lastSeq` and are not dispatched to `.on()`.
-- `stream_replay_unavailable` is no longer a 9-field wire event: it is `StreamReplayUnavailableEvent` `{ eventType, payload: { cursor, final_state? } }`, part of the `StreamEvent` union. It sets `error` only if the stream is not already `complete`.
-- `stream_resume` moves the status from `interrupted` back to `streaming` and clears `interrupt`.
-- A drop no longer overwrites an existing error (for example a failed terminal followed by the close).
-- `_handleSseMessage(eventType, data)` (internal test hook) no longer takes an id.
-- `resolveUrl` may return `null`: the transport stops reconnecting, closes, and moves to `disconnected`. Not a failure, and `AgenticStream` does not set an error. A throw still counts as a failed attempt.
-- New `SSETransport.getStopReason()` and `StreamTransportStopReason` (`'terminal' | 'replay_unavailable' | 'resolver' | 'manual' | 'failed'`, `null` while running). `onConnectionStateChange` callbacks receive it as a second argument. `StreamTransport` gains optional `getStopReason?()`; custom transports need no change.
-
-### Added
-- Browser build `dist/index.global.js`: IIFE, global `AgenticGraphStream`, minified, no runtime dependencies (16.6 KB, 4.8 KB gzipped). `unpkg`, `jsdelivr` and the `./iife` export point to it.
-
-### BREAKING
-- `ExecutionTerminalPayload.final_state` is `Record<string, unknown> | null`. The server sends `null` unless it sets `AGENTICGRAPH_STREAM_EXPOSE_FINAL_STATE=true` (wire contract v1.1). The `replay_unavailable` error and test fixtures use the same type.
+**Compatible core:** `shahzad/agenticgraph` 0.2.x on the server (stream wire contract v1.1).
