@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.0 (unreleased)
+## 0.1.0 - 2026-11-06
 
 Initial release of `@agenticgraph/stream-client`, `@agenticgraph/stream-react` and `@agenticgraph/stream-vue`: show AgenticGraph runs live in the browser or Node.js.
 
@@ -15,4 +15,4 @@ Initial release of `@agenticgraph/stream-client`, `@agenticgraph/stream-react` a
 
 **Requirements:** Node.js 18+. React 18+ for `stream-react`, Vue 3.4+ for `stream-vue`, `laravel-echo` 1.16+ only for the Echo transport.
 
-**Compatible core:** `shahzad/agenticgraph` 0.2.x on the server (stream wire contract v1.1).
+**Compatible core:** `agenticgraph/agenticgraph` 0.2.x on the server (stream wire contract v1.1).
