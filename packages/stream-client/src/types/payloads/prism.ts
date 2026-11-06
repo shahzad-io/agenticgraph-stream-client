@@ -1,3 +1,4 @@
+import type { ProviderErrorCategory } from './framework.js';
 /**
  * Semi-closed Prism content event payloads.
  * Version-pinned to Prism 0.102; a future Prism upgrade may add types.
@@ -154,7 +155,8 @@ export interface ArtifactPayload {
 }
 
 export interface PrismErrorPayload {
-  error_type: string;
+  /** `rate_limited`, `provider_unavailable` or `provider_error` by default; the provider's own type when the server exposes error details. */
+  error_type: ProviderErrorCategory | (string & {});
   message: string;
   recoverable: boolean;
   metadata: Record<string, unknown> | null;

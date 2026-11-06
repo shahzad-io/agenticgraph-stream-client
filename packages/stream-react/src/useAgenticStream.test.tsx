@@ -495,8 +495,28 @@ describe('useAgenticStream when connect() rejects (React)', () => {
       expect(result.current.error).toEqual({
         kind: 'connection',
         message: 'Stream transport failed to connect',
+        canReconnect: false,
       });
     });
     expect(result.current.client).toBeNull();
+  });
+
+  it('reconnect() recovers from exhausted attempts and keeps the text', async () => {
+    const { transport, hook } = await setup();
+
+    act(() => {
+      transport.emit(makeTextDeltaEvent('hi'));
+      transport.simulateFailure();
+    });
+    await waitFor(() => expect(hook.result.current.status).toBe('error'));
+    expect(hook.result.current.error).toMatchObject({ kind: 'connection', canReconnect: true });
+
+    await act(async () => {
+      await hook.result.current.reconnect();
+    });
+
+    await waitFor(() => expect(hook.result.current.status).toBe('streaming'));
+    expect(hook.result.current.error).toBeNull();
+    expect(hook.result.current.text).toBe('hi');
   });
 });

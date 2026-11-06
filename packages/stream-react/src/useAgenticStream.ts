@@ -26,6 +26,8 @@ export interface UseAgenticStreamReturn {
   error: StreamErrorDetail | null;
   interrupt: StreamInterrupt | null;
   resume: (decision: unknown) => Promise<void>;
+  /** Resume from the last event after a lost connection (`error.canReconnect` is true). No-op when connected. */
+  reconnect: () => Promise<void>;
   lastEvent: StreamEvent | null;
   client: AgenticStream | null;
 }
@@ -71,7 +73,7 @@ export function useAgenticStream(options: UseAgenticStreamOptions): UseAgenticSt
       } catch (failure) {
         if (!cancelled) {
           setStatus('error');
-          setError({ kind: 'connection', message: failure instanceof Error ? failure.message : String(failure) });
+          setError({ kind: 'connection', message: failure instanceof Error ? failure.message : String(failure), canReconnect: false });
         }
 
         return;
@@ -120,6 +122,10 @@ export function useAgenticStream(options: UseAgenticStreamOptions): UseAgenticSt
     [client],
   );
 
+  const reconnect = useCallback(async () => {
+    await client?.reconnect();
+  }, [client]);
+
   return {
     text,
     finalText,
@@ -127,6 +133,7 @@ export function useAgenticStream(options: UseAgenticStreamOptions): UseAgenticSt
     error,
     interrupt,
     resume,
+    reconnect,
     lastEvent,
     client,
   };

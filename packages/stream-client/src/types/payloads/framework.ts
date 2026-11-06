@@ -19,9 +19,25 @@ export interface GraphCompletePayload {
   stream?: LifecycleStreamTelemetry;
 }
 
+/**
+ * `error_type` on the wire. By default a generic value (`ExecutionFailed`) or, for a failed model
+ * provider call, a fixed category. With `AGENTICGRAPH_STREAM_EXPOSE_ERROR_DETAILS` on the server it
+ * is the exception class (any string). Always a string; the union is for autocomplete.
+ */
+export type ErrorType = ProviderErrorCategory | 'ExecutionFailed' | (string & {});
+
+/** Fixed categories the server picks for a failed model provider call (never the provider's text). */
+export type ProviderErrorCategory = 'rate_limited' | 'provider_unavailable' | 'provider_error';
+
+/** Why an execution was failed from outside the run. */
+export type GraphFailedReason = 'interrupt_expired' | 'stale_queued' | 'stale_running';
+
 export interface GraphFailedPayload {
-  error_type: string;
+  /** See {@link ErrorType}. */
+  error_type: ErrorType;
+  /** A fixed sentence by default; the exception message when the server exposes error details. */
   message: string;
+  reason?: GraphFailedReason;
   stream?: LifecycleStreamTelemetry;
 }
 
@@ -62,7 +78,8 @@ export interface NodeCompletePayload {
 
 export interface NodeErrorPayload {
   node_name: string;
-  error_type: string;
+  /** See {@link ErrorType}. */
+  error_type: ErrorType;
   message: string;
   stream?: LifecycleStreamTelemetry;
 }
@@ -103,9 +120,16 @@ export interface ExecutionTerminalPayload {
   status: ExecutionTerminalStatus;
   /** null unless the server sets AGENTICGRAPH_STREAM_EXPOSE_FINAL_STATE=true (wire contract v1.1). */
   final_state: Record<string, unknown> | null;
-  meta?: Record<string, unknown>;
+  /** For `failed`: `error_type`, `message` and `reason` (generic unless the server exposes error details). */
+  meta?: ExecutionTerminalMeta;
   stream?: LifecycleStreamTelemetry;
 }
+
+export type ExecutionTerminalMeta = Record<string, unknown> & {
+  error_type?: ErrorType;
+  message?: string;
+  reason?: GraphFailedReason;
+};
 
 /**
  * Broadcast terminal - minimal payload, NOT the 9-field wire envelope.

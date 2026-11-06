@@ -66,6 +66,27 @@ export function parseInterruptFromEvent(event: StreamEvent): StreamInterrupt | n
   return null;
 }
 
+function terminalErrorDetail(
+  source: 'stream_close' | 'execution_terminal',
+  fallback: string,
+  meta: unknown,
+): StreamErrorDetail {
+  const fields = wireRecord(meta);
+  const detail: StreamErrorDetail = {
+    kind: 'terminal_error',
+    source,
+    message: typeof fields.message === 'string' && fields.message !== '' ? fields.message : fallback,
+    meta,
+    canReconnect: false,
+  };
+
+  if (typeof fields.error_type === 'string') {
+    detail.error_type = fields.error_type;
+  }
+
+  return detail;
+}
+
 /**
  * Apply a wire event to stream state (status, interrupt, error).
  */
@@ -96,12 +117,7 @@ export function applyEventToStreamState(
         next.error = null;
       } else {
         next.status = 'error';
-        next.error = {
-          kind: 'terminal_error',
-          source: 'stream_close',
-          message: 'Stream closed with error',
-          meta: payload.meta,
-        };
+        next.error = terminalErrorDetail('stream_close', 'Stream closed with error', payload.meta);
       }
 
       break;
@@ -117,12 +133,7 @@ export function applyEventToStreamState(
         next.error = null;
       } else {
         next.status = 'error';
-        next.error = {
-          kind: 'terminal_error',
-          source: 'execution_terminal',
-          message: 'Execution failed',
-          meta: payload.meta,
-        };
+        next.error = terminalErrorDetail('execution_terminal', 'Execution failed', payload.meta);
       }
 
       break;
@@ -144,6 +155,7 @@ export function applyEventToStreamState(
         error_type: payload.error_type,
         message: payload.message,
         stage: payload.stage,
+        canReconnect: false,
       };
       break;
     }
@@ -169,6 +181,6 @@ export function applyConnectionDrop(
   return {
     ...current,
     status: 'error',
-    error: { kind: 'connection', message },
+    error: { kind: 'connection', message, canReconnect: true },
   };
 }

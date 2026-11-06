@@ -81,6 +81,11 @@ export class MockTransport implements StreamTransport {
     this.setConnectionState('disconnected');
   }
 
+  /** Simulate a transport that gave up reconnecting (state `failed`). */
+  simulateFailure(): void {
+    this.setConnectionState('failed');
+  }
+
   private teardown(clearCallback: boolean): void {
     this.setConnectionState('disconnected');
 

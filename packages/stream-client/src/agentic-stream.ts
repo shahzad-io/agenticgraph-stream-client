@@ -154,7 +154,8 @@ export class AgenticStream {
 
   /**
    * Manual reconnect. No-op when already connected. SSETransport reconnects by itself;
-   * use this after it reports `failed`.
+   * use this after it reports `failed` (`error.canReconnect` is true). It resumes from the last
+   * event, so nothing is missed or shown twice; Echo re-subscribes without replay.
    */
   async reconnect(): Promise<void> {
     if (this.reconnecting) {
@@ -250,6 +251,7 @@ export class AgenticStream {
           kind: 'replay_unavailable',
           cursor: parseReplayCursor(payload),
           final_state: payload.final_state,
+          canReconnect: false,
         },
       });
 
@@ -261,6 +263,18 @@ export class AgenticStream {
     }
 
     const next = applyEventToStreamState(event, this.state);
+
+    if (event.eventType === 'execution_terminal') {
+      // Handlers run first, while status and error still hold the previous values.
+      try {
+        this.eventStream.dispatch(event);
+      } finally {
+        this.updateState(next);
+      }
+
+      return;
+    }
+
     this.updateState(next);
     this.eventStream.dispatch(event);
   }
@@ -269,7 +283,10 @@ export class AgenticStream {
     state: StreamTransportConnectionState,
     stopReason: StreamTransportStopReason | null,
   ): void {
-    if (state === 'failed') {
+    if (state === 'connected' && this.state.error?.kind === 'connection') {
+      // reconnect() worked: back to streaming; replayed events (or the terminal) follow.
+      this.updateState({ ...this.state, status: 'streaming', error: null });
+    } else if (state === 'failed') {
       this.updateState(applyConnectionDrop(this.state, 'Reconnect attempts exhausted'));
     } else if (state === 'disconnected' && this.connected && stopReason !== 'resolver') {
       // resolveUrl returned null: the app ended the stream on purpose, not a drop.

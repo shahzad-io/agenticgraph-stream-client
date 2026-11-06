@@ -265,6 +265,7 @@ describe('useAgenticStream when connect() rejects (Vue)', () => {
     expect(result.error.value).toEqual({
       kind: 'connection',
       message: 'Stream transport failed to connect',
+      canReconnect: false,
     });
     expect(result.client.value).toBeNull();
   });
@@ -328,5 +329,25 @@ describe('useStreamSelector (Vue)', () => {
     await nextTick();
 
     expect(result.count.value).toBe(2);
+  });
+
+  it('reconnect() recovers from exhausted attempts and keeps the text', async () => {
+    const transport = new MockTransport();
+    const { result } = mountComposable(() => useAgenticStream({ transport }));
+
+    await waitForClient(result);
+    transport.emit(makeTextDeltaEvent('hi'));
+    transport.simulateFailure();
+    await nextTick();
+
+    expect(result.status.value).toBe('error');
+    expect(result.error.value).toMatchObject({ kind: 'connection', canReconnect: true });
+
+    await result.reconnect();
+    await nextTick();
+
+    expect(result.status.value).toBe('streaming');
+    expect(result.error.value).toBeNull();
+    expect(result.text.value).toBe('hi');
   });
 });

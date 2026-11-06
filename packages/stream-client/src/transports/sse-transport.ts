@@ -36,6 +36,7 @@ const SSE_EVENT_TYPES = [
   'provider_tool_event',
   'artifact',
   'error',
+  'custom_event',
 ] as const;
 
 function defaultEventSourceFactory(url: string): EventSourceLike {
@@ -46,16 +47,21 @@ function defaultEventSourceFactory(url: string): EventSourceLike {
   return new EventSource(url) as unknown as EventSourceLike;
 }
 
-function withCursor(baseUrl: string, cursor: number | null): string {
-  if (cursor === null) {
-    return baseUrl;
-  }
-
+/**
+ * Adds `custom_events=wrap` (author-defined events arrive as `custom_event`, a name the browser
+ * can listen for; a server before core 0.2.1 ignores it) and the resume cursor. A relative URL stays relative.
+ */
+function withParams(baseUrl: string, cursor: number | null): string {
+  const relative = !/^[a-z][a-z0-9+.-]*:/i.test(baseUrl);
   const url = new URL(baseUrl, typeof window !== 'undefined' ? window.location.href : 'http://localhost');
 
-  url.searchParams.set('cursor', String(cursor));
+  url.searchParams.set('custom_events', 'wrap');
 
-  return url.toString();
+  if (cursor !== null) {
+    url.searchParams.set('cursor', String(cursor));
+  }
+
+  return relative ? `${url.pathname}${url.search}${url.hash}` : url.toString();
 }
 
 function controlName(data: unknown): string | null {
@@ -129,7 +135,7 @@ export class SSETransport implements StreamTransport {
     this.stopped = false;
     this.stopReason = null;
     this.failures = 0;
-    this.openEventSource(withCursor(this.baseUrl, this.lastSeq), 'connecting');
+    this.openEventSource(withParams(this.baseUrl, this.lastSeq), 'connecting');
   }
 
   async disconnect(): Promise<void> {
@@ -238,7 +244,7 @@ export class SSETransport implements StreamTransport {
       return;
     }
 
-    this.openEventSource(withCursor(url, this.lastSeq), 'reconnecting');
+    this.openEventSource(withParams(url, this.lastSeq), 'reconnecting');
   }
 
   /** Error or end of response: close at once (no native retry), then back off or give up. */
@@ -308,6 +314,22 @@ export class SSETransport implements StreamTransport {
   }
 
   private deliverParsed(eventType: string, data: unknown): void {
+    if (eventType === 'custom_event') {
+      // Wrapped author event: the author's type is in `event_type`, not part of the wire body.
+      if (typeof data !== 'object' || data === null) {
+        return;
+      }
+
+      const { event_type: authorType, ...body } = data as Record<string, unknown>;
+
+      if (typeof authorType !== 'string' || authorType === '') {
+        return;
+      }
+
+      eventType = authorType;
+      data = body;
+    }
+
     const control = controlName(data);
 
     if (control !== null) {

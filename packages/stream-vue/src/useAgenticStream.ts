@@ -10,7 +10,7 @@ import {
   type StreamStatus,
   type StreamTransport,
 } from '@agenticgraph/stream-client';
-import { onUnmounted, shallowRef, ref, watch } from 'vue';
+import { onUnmounted, shallowRef, ref, watch, type Ref, type ShallowRef } from 'vue';
 
 export interface UseAgenticStreamOptions {
   transport: StreamTransport;
@@ -22,15 +22,17 @@ export interface UseAgenticStreamOptions {
  */
 export function useAgenticStream(options: UseAgenticStreamOptions): {
   /** Every text_delta of the run, every step (the narration). */
-  text: ReturnType<typeof ref<string>>;
+  text: Ref<string>;
   /** Text of the current or last step; after a tool run, the final answer (LlmResponse::text on the server). */
-  finalText: ReturnType<typeof ref<string>>;
-  status: ReturnType<typeof ref<StreamStatus>>;
-  error: ReturnType<typeof ref<StreamErrorDetail | null>>;
-  interrupt: ReturnType<typeof ref<StreamInterrupt | null>>;
+  finalText: Ref<string>;
+  status: Ref<StreamStatus>;
+  error: Ref<StreamErrorDetail | null>;
+  interrupt: Ref<StreamInterrupt | null>;
   resume: (decision: unknown) => Promise<void>;
-  lastEvent: ReturnType<typeof shallowRef<StreamEvent | null>>;
-  client: ReturnType<typeof shallowRef<AgenticStream | null>>;
+  /** Resume from the last event after a lost connection (`error.canReconnect` is true). No-op when connected. */
+  reconnect: () => Promise<void>;
+  lastEvent: ShallowRef<StreamEvent | null>;
+  client: ShallowRef<AgenticStream | null>;
 } {
   const text = ref('');
   const finalText = ref('');
@@ -51,7 +53,7 @@ export function useAgenticStream(options: UseAgenticStreamOptions): {
     } catch (failure) {
       if (!cancelled) {
         status.value = 'error';
-        error.value = { kind: 'connection', message: failure instanceof Error ? failure.message : String(failure) };
+        error.value = { kind: 'connection', message: failure instanceof Error ? failure.message : String(failure), canReconnect: false };
       }
 
       return;
@@ -120,6 +122,10 @@ export function useAgenticStream(options: UseAgenticStreamOptions): {
     await executeResume(client.value, decision, options.onResume);
   }
 
+  async function reconnect(): Promise<void> {
+    await client.value?.reconnect();
+  }
+
   return {
     text,
     finalText,
@@ -127,6 +133,7 @@ export function useAgenticStream(options: UseAgenticStreamOptions): {
     error,
     interrupt,
     resume,
+    reconnect,
     lastEvent,
     client,
   };

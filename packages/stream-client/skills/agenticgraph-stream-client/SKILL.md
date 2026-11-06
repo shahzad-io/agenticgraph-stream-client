@@ -34,14 +34,15 @@ stream.onStatusChange((status, snapshot) => render(status, snapshot.error));
 - `events()` is an async iterable from the moment you start iterating. It has no replay.
 - `status`: `idle`, `streaming`, `complete`, `interrupted`, `error`.
 - `interrupt`: `{ checkpointId, reason, node, payload }`. `payload` is the full wire interrupt payload; the app's own review data is at `payload.interrupt_payload`.
-- `error`: `kind` is `connection`, `stream_error`, `terminal_error` or `replay_unavailable`.
+- `error`: `kind` is `connection`, `stream_error`, `terminal_error` or `replay_unavailable`. `canReconnect` is true only for `connection`. A `terminal_error` carries `meta.message` and `error_type` when the server exposes error details.
+- Custom events (core 0.2.1): the transport sends `?custom_events=wrap` and delivers them under the author's type to `on()`.
 - `disconnect()` closes the stream and the transport. `reconnect()` is a manual reconnect: it does nothing when the transport is already connected.
 
 ## Reconnect (SSETransport)
 
 - On an error, or when the response ends, the transport closes the `EventSource` (the browser's own retry is off) and reopens it with `?cursor=<lastSeq>`. It resumes after the last event it delivered, so the gap is filled.
 - Backoff: `baseDelayMs` (500) doubled per consecutive failure, with jitter, capped at `maxDelayMs` (10000).
-- When consecutive failures go past `maxAttempts` (5), the transport gives up and reports `failed`: that is five retries that also failed. The stream then has `status === 'error'` with `error.kind === 'connection'` and the message `Reconnect attempts exhausted`. Call `stream.reconnect()`, or make a new transport.
+- When consecutive failures go past `maxAttempts` (5), the transport gives up and reports `failed`: that is five retries that also failed. The stream then has `status === 'error'` with `error.kind === 'connection'` and the message `Reconnect attempts exhausted`. `error.canReconnect` is `true`: call `stream.reconnect()` (hooks: `reconnect()`); it resumes from the last event and `status` returns to `streaming`. Or make a new transport.
 - A transient drop is not an error state. While retries run, `status` stays where it was.
 - The server can ask for a reconnect (control `reconnect` with `after_ms`). The transport honours it.
 

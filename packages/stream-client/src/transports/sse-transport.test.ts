@@ -141,7 +141,7 @@ describe('SSETransport', () => {
     await transport.connect();
 
     expect(fakes).toHaveLength(2);
-    expect(fakes[1]!.url).toBe('http://localhost/streams/s1');
+    expect(fakes[1]!.url).toBe('http://localhost/streams/s1?custom_events=wrap');
   });
 
   it('reports connected only on the real open event', async () => {
@@ -169,7 +169,7 @@ describe('SSETransport', () => {
     await vi.advanceTimersByTimeAsync(375);
 
     expect(fakes).toHaveLength(2);
-    expect(fakes[1]!.url).toBe('http://localhost/streams/s1?cursor=4');
+    expect(fakes[1]!.url).toBe('http://localhost/streams/s1?custom_events=wrap&cursor=4');
   });
 
   it('backs off exponentially with jitter up to maxDelayMs', async () => {
@@ -242,7 +242,7 @@ describe('SSETransport', () => {
     await vi.advanceTimersByTimeAsync(1499);
     expect(fakes).toHaveLength(2);
     await vi.advanceTimersByTimeAsync(1);
-    expect(fakes[2]!.url).toBe('http://localhost/streams/s1?cursor=7');
+    expect(fakes[2]!.url).toBe('http://localhost/streams/s1?custom_events=wrap&cursor=7');
 
     last().fail();
     await vi.advanceTimersByTimeAsync(10_000);
@@ -332,8 +332,8 @@ describe('SSETransport', () => {
     await vi.advanceTimersByTimeAsync(10_000);
 
     expect(resolveUrl).toHaveBeenCalledWith(4);
-    expect(fakes[0]!.url).toBe('http://localhost/streams/s1');
-    expect(fakes[1]!.url).toBe('http://localhost/streams/s1?signature=sig-4&cursor=4');
+    expect(fakes[0]!.url).toBe('http://localhost/streams/s1?custom_events=wrap');
+    expect(fakes[1]!.url).toBe('http://localhost/streams/s1?signature=sig-4&custom_events=wrap&cursor=4');
   });
 
   it('counts a rejected resolveUrl as a failed attempt', async () => {
@@ -446,7 +446,108 @@ describe('SSETransport', () => {
 
     await transport.reconnect();
 
-    expect(fakes[1]!.url).toBe('http://localhost/streams/s1?cursor=5');
+    expect(fakes[1]!.url).toBe('http://localhost/streams/s1?custom_events=wrap&cursor=5');
     expect(transport.getConnectionState()).toBe('reconnecting');
+  });
+});
+
+describe('SSETransport custom events', () => {
+  it('asks for wrapped custom events on the first request', async () => {
+    const { transport, fakes } = setup();
+
+    await transport.connect();
+
+    expect(new URL(fakes[0]!.url).searchParams.get('custom_events')).toBe('wrap');
+  });
+
+  it('keeps the parameter on a cursor reconnect', async () => {
+    const { transport, fakes, send, last } = setup();
+
+    await transport.connect();
+    last().open();
+    send(last(), 7);
+    last().fail();
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    const url = new URL(fakes[1]!.url);
+    expect(url.searchParams.get('cursor')).toBe('7');
+    expect(url.searchParams.get('custom_events')).toBe('wrap');
+  });
+
+  it('adds the parameter to a resolveUrl URL and keeps its query', async () => {
+    const { transport, fakes, last } = setup({ resolveUrl: () => 'http://localhost/s?sig=abc' });
+
+    await transport.connect();
+    last().open();
+    last().fail();
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    const url = new URL(fakes[1]!.url);
+    expect(url.searchParams.get('sig')).toBe('abc');
+    expect(url.searchParams.get('custom_events')).toBe('wrap');
+  });
+
+  it('keeps the parameter on a manual reconnect', async () => {
+    const { transport, fakes } = setup({ maxAttempts: 0 });
+
+    await transport.connect();
+    fakes[0]!.fail();
+    await transport.reconnect();
+
+    expect(new URL(fakes[1]!.url).searchParams.get('custom_events')).toBe('wrap');
+  });
+
+  it('keeps a relative URL relative', async () => {
+    const { transport, fakes } = setup({ url: '/streams/s1?a=1' });
+
+    await transport.connect();
+
+    expect(fakes[0]!.url).toBe('/streams/s1?a=1&custom_events=wrap');
+  });
+
+  it('turns a custom_event frame back into the author event type', async () => {
+    const { transport, received, last } = setup();
+
+    await transport.connect();
+    last().open();
+    const { body } = wire(3, 'x', { sources: [1] });
+    last().send('custom_event', { ...body, event_type: 'sources' });
+
+    expect(received).toHaveLength(1);
+    expect(received[0]).toMatchObject({ eventType: 'sources', seq: 3, payload: { sources: [1] } });
+    expect(received[0]).not.toHaveProperty('event_type');
+    expect(transport.getLastSeq()).toBe(3);
+  });
+
+  it('unwraps an author type that is itself called custom_event', async () => {
+    const { transport, received, last } = setup();
+
+    await transport.connect();
+    last().open();
+    const { body } = wire(1);
+    last().send('custom_event', { ...body, event_type: 'custom_event' });
+
+    expect(received[0]).toMatchObject({ eventType: 'custom_event' });
+  });
+
+  it('drops a custom_event frame without an event_type', async () => {
+    const { transport, received, last } = setup();
+
+    await transport.connect();
+    last().open();
+    last().send('custom_event', wire(1).body);
+
+    expect(received).toHaveLength(0);
+  });
+
+  it('ignores custom events under their own name (server without the parameter)', async () => {
+    const { transport, received, send, last } = setup();
+
+    await transport.connect();
+    last().open();
+    send(last(), 1, 'sources');
+    send(last(), 2);
+
+    expect(received.map((event) => event.eventType)).toEqual(['text_delta']);
   });
 });

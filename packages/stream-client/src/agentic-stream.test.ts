@@ -541,7 +541,7 @@ describe('status model and connection states', () => {
 
     expect(transport.getConnectionState()).toBe('failed');
     expect(stream.status).toBe('error');
-    expect(stream.error).toEqual({ kind: 'connection', message: 'Reconnect attempts exhausted' });
+    expect(stream.error).toEqual({ kind: 'connection', message: 'Reconnect attempts exhausted', canReconnect: true });
 
     await stream.disconnect();
   });
@@ -561,6 +561,184 @@ describe('status model and connection states', () => {
     expect(transport.getStopReason()).toBe('resolver');
     expect(stream.status).not.toBe('error');
     expect(stream.error).toBeNull();
+
+    await stream.disconnect();
+  });
+  it('delivers a custom event to on() by its author type', async () => {
+    const { transport, sources } = failingSse(0);
+    const connecting = AgenticStream.connect({ transport });
+
+    sources[0]!.onopen?.(new Event('open'));
+    const stream = await connecting;
+    const seen: unknown[] = [];
+
+    stream.on('sources' as never, ((event: StreamEvent) => seen.push(event.eventType)) as never);
+    transport._handleSseMessage('custom_event', {
+      stream_id: 's',
+      execution_id: 'e',
+      node_name: 'retrieve',
+      span_id: null,
+      parent_span_id: null,
+      seq: 1,
+      node_seq: 1,
+      occurred_at: '2024-01-01T00:00:00+00:00',
+      payload: { n: 2 },
+      event_type: 'sources',
+    });
+
+    expect(seen).toEqual(['sources']);
+    await stream.disconnect();
+  });
+
+  it('runs execution_terminal handlers before the status changes', async () => {
+    const transport = new MockTransport();
+    const stream = await AgenticStream.connect({ transport });
+    const order: string[] = [];
+    let statusInHandler: StreamStatus | null = null;
+
+    stream.on('execution_terminal', () => {
+      statusInHandler = stream.status;
+      order.push('handler');
+    });
+    stream.onStatusChange((status) => order.push(status));
+    transport.emit(makeTextDeltaEvent('a'));
+    transport.emit(makeExecutionTerminalEvent('completed'));
+
+    expect(statusInHandler).toBe('streaming');
+    expect(order).toEqual(['streaming', 'handler', 'complete']);
+  });
+
+  it('runs a failed execution_terminal handler before the error status', async () => {
+    const transport = new MockTransport();
+    const stream = await AgenticStream.connect({ transport });
+    let statusInHandler: StreamStatus | null = null;
+
+    stream.on('execution_terminal', () => {
+      statusInHandler = stream.status;
+    });
+    transport.emit(makeTextDeltaEvent('a'));
+    transport.emit(makeExecutionTerminalEvent('failed'));
+
+    expect(statusInHandler).toBe('streaming');
+    expect(stream.status).toBe('error');
+  });
+
+  it('still changes the status when an execution_terminal handler throws', async () => {
+    const transport = new MockTransport();
+    const stream = await AgenticStream.connect({ transport });
+
+    stream.on('execution_terminal', () => {
+      throw new Error('boom');
+    });
+    transport.emit(makeTextDeltaEvent('a'));
+
+    expect(() => transport.emit(makeExecutionTerminalEvent('completed'))).toThrow('boom');
+    expect(stream.status).toBe('complete');
+  });
+
+  it('marks a lost connection as reconnectable and recovers on reconnect()', async () => {
+    const transport = new MockTransport();
+    const stream = await AgenticStream.connect({ transport });
+
+    transport.emit(makeTextDeltaEvent('a'));
+    transport.simulateFailure();
+
+    expect(stream.status).toBe('error');
+    expect(stream.error).toEqual({
+      kind: 'connection',
+      message: 'Reconnect attempts exhausted',
+      canReconnect: true,
+    });
+
+    await stream.reconnect();
+
+    expect(stream.status).toBe('streaming');
+    expect(stream.error).toBeNull();
+
+    transport.emit(makeExecutionTerminalEvent('completed'));
+    expect(stream.status).toBe('complete');
+  });
+
+  it('marks replay_unavailable and terminal errors as not reconnectable', async () => {
+    const t1 = new MockTransport();
+    const s1 = await AgenticStream.connect({ transport: t1 });
+
+    t1.emit(makeStreamReplayUnavailableEvent(3));
+    expect(s1.error).toMatchObject({ kind: 'replay_unavailable', canReconnect: false });
+
+    const t2 = new MockTransport();
+    const s2 = await AgenticStream.connect({ transport: t2 });
+
+    t2.emit(makeExecutionTerminalEvent('failed'));
+    expect(s2.error).toMatchObject({ kind: 'terminal_error', canReconnect: false });
+
+    const t3 = new MockTransport();
+    const s3 = await AgenticStream.connect({ transport: t3 });
+
+    t3.emit(makeStreamErrorEvent());
+    expect(s3.error).toMatchObject({ kind: 'stream_error', canReconnect: false });
+  });
+
+  it('uses meta.message and meta.error_type for a failed terminal when present', async () => {
+    const transport = new MockTransport();
+    const stream = await AgenticStream.connect({ transport });
+    const terminal = makeExecutionTerminalEvent('failed') as { payload: { meta?: unknown } };
+
+    terminal.payload.meta = { error_type: 'RuntimeException', message: 'db is down' };
+    transport.emit(terminal as unknown as StreamEvent);
+
+    expect(stream.error).toMatchObject({
+      kind: 'terminal_error',
+      message: 'db is down',
+      error_type: 'RuntimeException',
+    });
+  });
+
+  it('keeps the fixed terminal message without meta details', async () => {
+    const transport = new MockTransport();
+    const stream = await AgenticStream.connect({ transport });
+
+    transport.emit(makeExecutionTerminalEvent('failed'));
+
+    expect(stream.error).toMatchObject({ kind: 'terminal_error', message: 'Execution failed' });
+  });
+
+  it('resumes an SSE stream from the last seq after attempts are exhausted', async () => {
+    const { transport, sources } = failingSse(0);
+    const connecting = AgenticStream.connect({ transport });
+
+    sources[0]!.onopen?.(new Event('open'));
+    const stream = await connecting;
+    const seqs: number[] = [];
+    const body = (seq: number) => ({
+      stream_id: 's',
+      execution_id: 'e',
+      node_name: null,
+      span_id: null,
+      parent_span_id: null,
+      seq,
+      node_seq: seq,
+      occurred_at: '2024-01-01T00:00:00+00:00',
+      payload: { delta: 'x', message_id: 'm', timestamp: 1 },
+    });
+
+    stream.on((event) => {
+      if ('seq' in event) seqs.push(event.seq);
+    });
+    transport._handleSseMessage('text_delta', body(4));
+    sources[0]!.onerror?.(new Event('error'));
+    expect(stream.error).toMatchObject({ kind: 'connection', canReconnect: true });
+
+    await stream.reconnect();
+    const url = new URL(sources[1]!.url);
+
+    expect(url.searchParams.get('cursor')).toBe('4');
+    expect(url.searchParams.get('custom_events')).toBe('wrap');
+    sources[1]!.onopen?.(new Event('open'));
+    expect(stream.status).toBe('streaming');
+    transport._handleSseMessage('text_delta', body(4));
+    transport._handleSseMessage('text_delta', body(5));
+    expect(seqs).toEqual([4, 5]);
 
     await stream.disconnect();
   });

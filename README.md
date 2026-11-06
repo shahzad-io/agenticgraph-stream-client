@@ -33,7 +33,7 @@ The three packages are released together:
 |---|---|---|
 | `agenticgraph/agenticgraph` (core) | 0.2.x | PHP 8.3+, Laravel 12.61.1+ or 13.12+, Prism 0.102 |
 | `agenticgraph/vector` | 0.1.x | PHP 8.3+, Laravel 12.61.1+ or 13.12+, Prism 0.102, PostgreSQL with pgvector (0.8+ for iterative scan). Core 0.2.x is optional (tracing) |
-| `@agenticgraph/stream-client`, `@agenticgraph/stream-react`, `@agenticgraph/stream-vue` | 0.1.x | Core 0.2.x on the server (stream wire contract v1.1), Node.js 18+, React 18+ or Vue 3.4+ for the adapters |
+| `@agenticgraph/stream-client`, `@agenticgraph/stream-react`, `@agenticgraph/stream-vue` | 0.1.x | Core 0.2.x on the server (stream wire contract v1.1; 0.2.1 for custom events and error details), Node.js 18+, React 18+ or Vue 3.4+ for the adapters |
 
 ## Installation
 
@@ -138,12 +138,16 @@ cp node_modules/@agenticgraph/stream-client/dist/index.global.js public/js/agent
 
 Once the package is published, `https://unpkg.com/@agenticgraph/stream-client` serves the same file.
 
+## Custom events (SSE)
+
+The transport sends `?custom_events=wrap`, so events your nodes define (`streamEvent('sources', ...)`) arrive as `custom_event` frames and are delivered under your own type: `stream.on('sources', ...)`, selectors, and `lastEvent` in the hooks. Needs core 0.2.1; core 0.2.0 ignores the parameter and these events are not delivered over SSE.
+
 ## Reconnect (SSE)
 
 `SSETransport` reconnects by itself. On an error or the end of a response it closes the `EventSource` (no native browser retry) and reopens with `?cursor=<last seq>`, so nothing is missed and nothing is shown twice (events at or below the last seen `seq` are dropped).
 
 - **Planned close:** the server ends each response after `streaming.sse.max_duration_seconds` with a `stream_reconnect` control event. The client reopens after its `after_ms`. Not a failure.
-- **Drops:** exponential backoff with jitter. After `maxAttempts` failures in a row the connection state is `failed` and `stream.status` is `'error'` (`error.kind === 'connection'`); `await stream.reconnect()` tries again.
+- **Drops:** exponential backoff with jitter. After `maxAttempts` failures in a row the connection state is `failed` and `stream.status` is `'error'` (`error.kind === 'connection'`); `error.canReconnect` is `true` and `await stream.reconnect()` (or `reconnect()` from the hooks) resumes from the last event; on success `status` goes back to `'streaming'` and `error` clears. `canReconnect` is `false` for an ended run, a server error, an expired cursor and a failed first connect. Echo re-subscribes without replay.
 - **Approval waits:** an `interrupted` terminal keeps the connection; the resumed segment arrives on it, and `stream.status` goes from `'interrupted'` back to `'streaming'`.
 - **Stops** on a `completed` or `failed` terminal, on `stream_replay_unavailable` (the cursor is older than anything the server still stores), and when `resolveUrl` returns `null`.
 

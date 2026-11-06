@@ -35,3 +35,25 @@ function assertKnownNarrowing(e: KnownStreamEvent): void {
 }
 
 void assertKnownNarrowing;
+
+import type { ProviderErrorCategory } from '../payloads/framework.js';
+
+function assertErrorTypes(e: KnownStreamEvent): void {
+  if (e.eventType === 'graph_failed') {
+    e.payload.reason satisfies 'interrupt_expired' | 'stale_queued' | 'stale_running' | undefined;
+    e.payload.error_type satisfies string;
+  }
+
+  if (e.eventType === 'error') {
+    e.payload.metadata satisfies Record<string, unknown> | null;
+  }
+
+  if (e.eventType === 'execution_terminal') {
+    e.payload.meta?.error_type satisfies unknown;
+  }
+
+  const category: ProviderErrorCategory = 'rate_limited';
+  category satisfies 'rate_limited' | 'provider_unavailable' | 'provider_error';
+}
+
+void assertErrorTypes;
