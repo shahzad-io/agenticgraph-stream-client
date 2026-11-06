@@ -13,6 +13,7 @@
  *   3. forced network drops (TCP proxy), backoff
  *   4. SSE approval run: wait longer than max_duration, approve, resumed segment
  *   5. a real "gone" cursor (truncated stream)
+ *   6. the custom event `sources` (?custom_events=wrap): own name, exactly once, replayed after a drop
  *
  * Check 6 (IIFE build on a plain HTML page, real browser) uses the same servers:
  *   KEEP_SERVERS=1 npm run integration:sse     keeps them up after the checks
@@ -92,7 +93,7 @@ function flushRedis() {
 }
 
 function startPhp(name, args, cwd, env) {
-  const child = spawn('php', args, { cwd, env, stdio: ['ignore', 'ignore', 'pipe'] });
+  const child = spawn('php', args, { cwd, env, stdio: ['ignore', 'ignore', 'pipe'], detached: true });
   const errors = [];
   child.stderr.on('data', (chunk) => errors.push(String(chunk)));
   child.on('exit', (code) => {
@@ -138,7 +139,12 @@ function shutdown() {
   shuttingDown = true;
 
   for (const child of children) {
-    child.kill('SIGTERM');
+    // own process group: php -S forks its workers, and they must stop with it
+    try {
+      process.kill(-child.pid, 'SIGTERM');
+    } catch {
+      child.kill('SIGTERM');
+    }
   }
 }
 
@@ -191,13 +197,14 @@ function createProxy(listenPort, targetPort) {
  * relies on (onopen on a 200, onerror when the request fails or the response ends, typed
  * `event:` listeners, no native retry). Each instance is one connection in `log`.
  */
-function nodeEventSourceFactory(log) {
+function nodeEventSourceFactory(log, { dropFirstConnectionAfterEvents = 0 } = {}) {
   return (url) => {
     const record = { url, startedAt: Date.now(), openedAt: null, failedAt: null, end: null, controls: [] };
     const listeners = new Map();
     const controller = new AbortController();
     let closed = false;
     let readyState = 0;
+    let framesDelivered = 0;
     log.push(record);
 
     const source = {
@@ -254,6 +261,15 @@ function nodeEventSourceFactory(log) {
             buffer = buffer.slice(boundary + 2);
             boundary = buffer.indexOf('\n\n');
 
+            // Deterministic forced drop: the first connection fails after N events, whatever the chunking.
+            if (dropFirstConnectionAfterEvents > 0 && log.length === 1 && framesDelivered >= dropFirstConnectionAfterEvents) {
+              throw new Error('forced drop');
+            }
+
+            if (frame?.id) {
+              framesDelivered += 1;
+            }
+
             if (frame?.eventType) {
               if (frame.data && typeof frame.data === 'object' && 'control' in frame.data) {
                 record.controls.push(frame.data.control);
@@ -282,12 +298,12 @@ function nodeEventSourceFactory(log) {
 }
 
 /** Follow one stream URL with the library. Resolves once the stream is complete/error or the timeout. */
-async function follow(url, { until = ['complete', 'error'], timeoutMs = 90_000, options = {}, onEvent } = {}) {
+async function follow(url, { until = ['complete', 'error'], timeoutMs = 90_000, options = {}, onEvent, dropFirstConnectionAfterEvents } = {}) {
   const connections = [];
   const events = [];
   const states = [];
   const statuses = [];
-  const transport = new SSETransport({ url, eventSourceFactory: nodeEventSourceFactory(connections), ...options });
+  const transport = new SSETransport({ url, eventSourceFactory: nodeEventSourceFactory(connections, { dropFirstConnectionAfterEvents }), ...options });
   transport.onConnectionStateChange((state) => states.push({ state, at: Date.now() }));
 
   const stream = await AgenticStream.connect({ transport });
@@ -548,6 +564,36 @@ async function check5(streamUrl) {
   };
 }
 
+/** The demo's PrepareNode emits `sources` once per run (core 0.2.1, client 0.1.1). */
+async function check6() {
+  const start = await post(LONG, '/demo/linear-sse/start', { topic: TOPIC });
+  // The first connection fails after one event (graph_start), before `sources` (seq 3): it must come from the replay.
+  const run = await (await follow(start.stream_url, { dropFirstConnectionAfterEvents: 1 })).done;
+
+  const stored = await readStored(start.stream_url);
+  const sources = run.events.filter((e) => e.eventType === 'sources');
+  const storedSources = stored.filter((e) => e.eventType === 'sources');
+  const comparison = await compareWithStored(run, start.stream_url);
+  const summary = connectionSummary(run);
+  const wrapped = run.connections.every((c) => new URL(c.url).searchParams.get('custom_events') === 'wrap');
+
+  return {
+    pass: run.stream.status === 'complete' && sources.length === 1 && storedSources.length === 1
+      && sources[0].seq === storedSources[0].seq && Array.isArray(sources[0].payload?.items) && sources[0].payload.items.length > 0
+      && sources[0].connection === 1 && summary.reconnects === 1 && wrapped
+      && comparison.seqsEqual && comparison.duplicates === 0 && comparison.missing === 0 && !summary.failedState,
+    status: run.stream.status,
+    sourcesReceived: sources.length,
+    sourcesStored: storedSources.length,
+    sourcesSeq: sources[0]?.seq,
+    sourcesOnConnection: sources[0]?.connection,
+    items: sources[0]?.payload?.items,
+    everyConnectionAskedForWrap: wrapped,
+    ...comparison,
+    ...summary,
+  };
+}
+
 // --- main ------------------------------------------------------------------------------
 
 async function main() {
@@ -579,6 +625,8 @@ async function main() {
   await check('4 SSE approval run across planned closes', check4);
   await check('5 gone cursor (truncated stream)', () => check5(results['1 live run read while it streams'].streamUrl));
 
+  await check('6 custom event across a drop and reconnect', check6);
+
   const report = { date: new Date().toISOString(), long: LONG, short: SHORT, results };
   writeFileSync(`${SCRATCH}/sse-harness-report.json`, JSON.stringify(report, null, 2));
   console.log(JSON.stringify(results, null, 2));
@@ -606,5 +654,7 @@ main()
   .finally(() => {
     if (process.env.KEEP_SERVERS !== '1') {
       shutdown();
+      // The forked php -S workers keep the stderr pipes open, so node would wait for them forever.
+      process.exit();
     }
   });
