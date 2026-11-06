@@ -4,12 +4,17 @@
 
 Fixes from the first public install.
 
+### Fixed
+
 - **Custom events reach the app.** The SSE transport sends `?custom_events=wrap` on the first request, every reconnect and every `resolveUrl` URL, and turns `custom_event` frames back into the author's event type. `on('sources', ...)`, the selectors and the hooks' `lastEvent` now see them. Needs core 0.2.1; against core 0.2.0 the parameter is ignored and custom events are still not delivered over SSE.
 - **The terminal event comes before the status change.** `execution_terminal` handlers run while `status` and `error` still hold their previous values; the status changes right after, even if a handler throws.
 - **`reconnect()` in the hooks.** `useAgenticStream` (React and Vue) returns `reconnect()`, which resumes from the last event after "Reconnect attempts exhausted". `error.canReconnect` says when that is possible (a lost connection only). A successful reconnect moves `status` from `error` back to `streaming` and clears `error`; before, it stayed in `error`. The text is kept.
 - **Vue types.** `text`, `finalText`, `status`, `error` and `interrupt` are `Ref<string>`, `Ref<StreamStatus>` and so on, no longer `Ref<... | undefined>`.
 - **Error types.** New `ProviderErrorCategory` (`rate_limited`, `provider_unavailable`, `provider_error`), `ErrorType`, `GraphFailedReason` and `ExecutionTerminalMeta`. `error_type` and `message` are generic by default and carry the exception class and message when the server sets `AGENTICGRAPH_STREAM_EXPOSE_ERROR_DETAILS`. `error.kind === 'terminal_error'` now uses `meta.message` and adds `error_type` from `meta.error_type` when present.
-- `MockTransport.simulateFailure()` for tests.
+
+### Added
+
+- `MockTransport.simulateFailure()` simulates a transport that gave up reconnecting (connection state `failed`), so tests can cover the `error` state and `reconnect()` without a server. `simulateDrop()` is unchanged.
 
 **Compatible core:** `agenticgraph/agenticgraph` 0.2.1 or later for custom events and error details; 0.2.0 works for everything else.
 

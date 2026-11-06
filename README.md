@@ -76,7 +76,7 @@ import { SSETransport } from '@agenticgraph/stream-client';
 import { useAgenticStream } from '@agenticgraph/stream-react';
 
 function Chat({ streamId }: { streamId: string }) {
-  const { text, status, error } = useAgenticStream({
+  const { text, status, error, reconnect } = useAgenticStream({
     transport: new SSETransport({ url: `/agentic-graph/streams/${streamId}` }),
   });
 
@@ -85,6 +85,7 @@ function Chat({ streamId }: { streamId: string }) {
       <p>{text}</p>
       <p>Status: {status}</p>
       {error && <p>Error: {error.kind}</p>}
+      {error?.canReconnect && <button onClick={() => void reconnect()}>Reconnect</button>}
     </div>
   );
 }
@@ -99,7 +100,7 @@ import { useAgenticStream } from '@agenticgraph/stream-vue';
 
 const props = defineProps<{ streamId: string }>();
 
-const { text, status, error } = useAgenticStream({
+const { text, status, error, reconnect } = useAgenticStream({
   transport: new SSETransport({ url: `/agentic-graph/streams/${props.streamId}` }),
 });
 </script>
@@ -108,6 +109,7 @@ const { text, status, error } = useAgenticStream({
   <p>{{ text }}</p>
   <p>Status: {{ status }}</p>
   <p v-if="error">Error: {{ error.kind }}</p>
+  <button v-if="error?.canReconnect" @click="reconnect()">Reconnect</button>
 </template>
 ```
 
@@ -136,7 +138,7 @@ cp node_modules/@agenticgraph/stream-client/dist/index.global.js public/js/agent
 </script>
 ```
 
-Once the package is published, `https://unpkg.com/@agenticgraph/stream-client` serves the same file.
+From a CDN, pin the version: `https://unpkg.com/@agenticgraph/stream-client@0.1.1/dist/index.global.js` or `https://cdn.jsdelivr.net/npm/@agenticgraph/stream-client@0.1.1/dist/index.global.js` serves the same file.
 
 ## Custom events (SSE)
 
