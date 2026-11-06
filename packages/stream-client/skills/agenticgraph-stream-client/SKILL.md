@@ -5,7 +5,7 @@ description: "Consume AgenticGraph stream events in JavaScript with @agenticgrap
 
 # AgenticGraph stream client (npm)
 
-Package: `@agenticgraph/stream-client` 0.1.x. It needs AgenticGraph core 0.2.x on the server (wire contract v1.1). Server side (routes, `stream()`, `broadcast()`, resume): the `agenticgraph-streaming` skill in the Laravel package.
+Package: `@agenticgraph/stream-client` 0.1.x (0.1.1 or later). It needs AgenticGraph core 0.2.x on the server (wire contract v1.1); core 0.2.1 or later for custom events and error details. Server side (routes, `stream()`, `broadcast()`, resume): the `agenticgraph-streaming` skill in the Laravel package.
 
 Only `src/index.ts` exports are public. Every method and name below is checked against it by `src/skill.test.ts`.
 
@@ -35,8 +35,10 @@ stream.onStatusChange((status, snapshot) => render(status, snapshot.error));
 - `status`: `idle`, `streaming`, `complete`, `interrupted`, `error`.
 - `interrupt`: `{ checkpointId, reason, node, payload }`. `payload` is the full wire interrupt payload; the app's own review data is at `payload.interrupt_payload`.
 - `error`: `kind` is `connection`, `stream_error`, `terminal_error` or `replay_unavailable`. `canReconnect` is true only for `connection`. A `terminal_error` carries `meta.message` and `error_type` when the server exposes error details.
-- Custom events (core 0.2.1): the transport sends `?custom_events=wrap` and delivers them under the author's type to `on()`.
-- `disconnect()` closes the stream and the transport. `reconnect()` is a manual reconnect: it does nothing when the transport is already connected.
+- Custom events (client 0.1.1, core 0.2.1): the transport sends `?custom_events=wrap` on the first request, every reconnect and every `resolveUrl` URL, and delivers `custom_event` frames under the author's type to `on()`, the selectors and the hooks' `lastEvent`. Against core 0.2.0 the parameter is ignored and they do not arrive.
+- Error details: by default the server sends a generic `error_type` (`ExecutionFailed`, `StreamError`) and message. For a model provider failure `error_type` is a `ProviderErrorCategory`: `rate_limited`, `provider_unavailable` or `provider_error`. The real exception class and message arrive only when the server sets `AGENTICGRAPH_STREAM_EXPOSE_ERROR_DETAILS`. Types: `ProviderErrorCategory`, `ErrorType`, `GraphFailedReason`, `ExecutionTerminalMeta`.
+- `execution_terminal` handlers run while `status` and `error` still hold their previous values; the status changes right after.
+- `disconnect()` closes the stream and the transport. `reconnect()` is a manual reconnect: it does nothing when the transport is already connected. `useAgenticStream` (React and Vue) returns `reconnect()` too. A successful reconnect moves `status` from `error` to `streaming`, clears `error` and keeps the text. `error.canReconnect` is `false` when the first connect failed.
 
 ## Reconnect (SSETransport)
 
@@ -128,7 +130,7 @@ transport.emitSequence(events); // StreamEvent objects
 transport.simulateDrop();       // exercises the connection-drop path
 ```
 
-- `emit(event)`, `emitSequence(events)`, `simulateDrop()`, `setConnectDelay(ms)`.
+- `emit(event)`, `emitSequence(events)`, `simulateDrop()`, `simulateFailure()` (the transport gave up: the `error` state and `reconnect()`, no server needed), `setConnectDelay(ms)`.
 - `MockTransport` does not reconnect. Test reconnect behaviour with `SSETransport` and an injected `eventSourceFactory`.
 
 ## Mistakes
