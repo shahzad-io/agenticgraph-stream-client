@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.2 - 2026-11-08
+
+### Changed
+
+- Skills and docs guidance only, no code change. The `agenticgraph-stream-client` skill says to import the package from `resources/js/app.js` with Vite and load it with `@vite()`, and to use the script-tag build only without a bundler. The React and Vue adapters now depend on `@agenticgraph/stream-client` `^0.1.2`.
+
 ## 0.1.1 - 2026-11-07
 
 Fixes from the first public install.

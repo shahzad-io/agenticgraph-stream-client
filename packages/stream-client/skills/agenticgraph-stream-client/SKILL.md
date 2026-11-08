@@ -16,6 +16,7 @@ Only `src/index.ts` exports are public. Every method and name below is checked a
 - Use `SSETransport` when events must survive a drop. Use `EchoTransport` only when losing events during a drop is acceptable (it has no replay).
 - `SSETransport` reconnects by itself. Do not write a retry loop around it.
 - Read `transport.getStopReason()` to learn why a stream stopped. Do not guess from `status`.
+- In a Laravel app with Vite (the default), import the package from `resources/js/app.js` and load it with `@vite()`. Use the script-tag build only when there is no bundler. Never copy `dist/index.global.js` into `public/`.
 
 ## Connect and read events
 
@@ -96,12 +97,12 @@ const stream = await AgenticStream.connect({
 - No cursor, no `resolveUrl`, no replay. Events sent before the subscription are lost. Subscribe before the kickoff request when you can.
 - `eventTypes` lists the event names to listen to when `listenToAll` is not available. The defaults cover the framework and Prism events.
 
-## Script-tag build (IIFE)
+## Script-tag build (IIFE, only when there is no bundler)
 
-`dist/index.global.js` sets the global `window.AgenticGraphStream`. The package exports it as `./iife`, and `unpkg` and `jsdelivr` point to it.
+With Vite, import the package from `resources/js/app.js` and load it with `@vite()`. With no bundler, load the pinned CDN build: `dist/index.global.js` sets the global `window.AgenticGraphStream`. The package exports it as `./iife`, and `unpkg` and `jsdelivr` point to it.
 
 ```html
-<script src="/vendor/agenticgraph/index.global.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@agenticgraph/stream-client@0.1.2/dist/index.global.js"></script>
 <script>
   const { AgenticStream, SSETransport } = window.AgenticGraphStream;
   AgenticStream.connect({ transport: new SSETransport({ url: streamUrl }) });
