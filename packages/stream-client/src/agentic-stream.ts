@@ -51,12 +51,8 @@ export class AgenticStream {
   /**
    * Connect a transport and return the stream.
    *
-   * Resolves only once the transport reports `connected` - use this before kicking off
-   * a client-initiated broadcast flow so the subscription is live first. Rejects when the
-   * transport reports `failed` first.
-   *
-   * Broadcast is fire-and-forget (no replay). Events emitted before subscription are lost;
-   * SSE with cursor/seq is the gap-free-from-start alternative.
+   * Resolves once the transport reports `connected`. Rejects when the transport reports
+   * `failed`, or stops (for example `unauthorized`), first.
    */
   static async connect(options: AgenticStreamConnectOptions): Promise<AgenticStream> {
     const stream = new AgenticStream(options.transport);
@@ -155,7 +151,7 @@ export class AgenticStream {
   /**
    * Manual reconnect. No-op when already connected. SSETransport reconnects by itself;
    * use this after it reports `failed` (`error.canReconnect` is true). It resumes from the last
-   * event, so nothing is missed or shown twice; Echo re-subscribes without replay.
+   * event, so nothing is missed or shown twice. BroadcastTransport replays from its cursor too.
    */
   async reconnect(): Promise<void> {
     if (this.reconnecting) {
@@ -203,6 +199,14 @@ export class AgenticStream {
 
         if (state === 'failed') {
           reject(new Error('Stream transport failed to connect'));
+
+          return true;
+        }
+
+        const stopReason = this.transport.getStopReason?.() ?? null;
+
+        if (state === 'disconnected' && stopReason !== null) {
+          reject(new Error(`Stream transport stopped before it connected: ${stopReason}`));
 
           return true;
         }
@@ -288,6 +292,9 @@ export class AgenticStream {
       this.updateState({ ...this.state, status: 'streaming', error: null });
     } else if (state === 'failed') {
       this.updateState(applyConnectionDrop(this.state, 'Reconnect attempts exhausted'));
+    } else if (state === 'disconnected' && this.connected && stopReason === 'unauthorized') {
+      const next = applyConnectionDrop(this.state, 'Not authorized to read the stream');
+      this.updateState(next.error?.kind === 'connection' ? { ...next, error: { ...next.error, canReconnect: false } } : next);
     } else if (state === 'disconnected' && this.connected && stopReason !== 'resolver') {
       // resolveUrl returned null: the app ended the stream on purpose, not a drop.
       this.updateState(applyConnectionDrop(this.state));

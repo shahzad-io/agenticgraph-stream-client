@@ -14,7 +14,7 @@ This monorepo ships three packages:
 
 ## Features
 
-- **Multiple transports**: SSE (automatic reconnect, gap-free from the last event), Laravel Echo/WebSockets, and a mock transport for tests
+- **Multiple transports**: SSE (automatic reconnect, gap-free from the last event), broadcast over a private Laravel Echo channel with the same contract (core 0.3), and a mock transport for tests
 - **Browser build**: one `<script>` tag, global `AgenticGraphStream`, no build step
 - **Typed wire events**: Framework lifecycle events (graph/node start/complete, interrupts, errors) and Prism content events (text deltas, tool calls, thinking)
 - **Selectors**: Derive active node, accumulated text, tool calls, and thinking from the event stream
@@ -23,7 +23,7 @@ This monorepo ships three packages:
 ## Requirements
 
 - Node.js 18+
-- `laravel-echo` (optional peer dependency, required only for Echo transport)
+- `laravel-echo` (optional peer dependency, required only for broadcast)
 
 ## Compatibility
 
@@ -149,7 +149,7 @@ The transport sends `?custom_events=wrap`, so events your nodes define (`streamE
 `SSETransport` reconnects by itself. On an error or the end of a response it closes the `EventSource` (no native browser retry) and reopens with `?cursor=<last seq>`, so nothing is missed and nothing is shown twice (events at or below the last seen `seq` are dropped).
 
 - **Planned close:** the server ends each response after `streaming.sse.max_duration_seconds` with a `stream_reconnect` control event. The client reopens after its `after_ms`. Not a failure.
-- **Drops:** exponential backoff with jitter. After `maxAttempts` failures in a row the connection state is `failed` and `stream.status` is `'error'` (`error.kind === 'connection'`); `error.canReconnect` is `true` and `await stream.reconnect()` (or `reconnect()` from the hooks) resumes from the last event; on success `status` goes back to `'streaming'` and `error` clears. `canReconnect` is `false` for an ended run, a server error, an expired cursor and a failed first connect. Echo re-subscribes without replay.
+- **Drops:** exponential backoff with jitter. After `maxAttempts` failures in a row the connection state is `failed` and `stream.status` is `'error'` (`error.kind === 'connection'`); `error.canReconnect` is `true` and `await stream.reconnect()` (or `reconnect()` from the hooks) resumes from the last event; on success `status` goes back to `'streaming'` and `error` clears. `canReconnect` is `false` for an ended run, a server error, an expired cursor, a 403 (`unauthorized`) and a failed first connect.
 - **Approval waits:** an `interrupted` terminal keeps the connection; the resumed segment arrives on it, and `stream.status` goes from `'interrupted'` back to `'streaming'`.
 - **Stops** on a `completed` or `failed` terminal, on `stream_replay_unavailable` (the cursor is older than anything the server still stores), and when `resolveUrl` returns `null`.
 
@@ -167,7 +167,7 @@ const transport = new SSETransport({
 transport.onConnectionStateChange((state, stopReason) => {
   // 'connecting' | 'connected' | 'reconnecting' | 'failed' | 'disconnected'
   // stopReason on 'disconnected' and 'failed':
-  // 'terminal' | 'replay_unavailable' | 'resolver' | 'manual' | 'failed'
+  // 'terminal' | 'replay_unavailable' | 'resolver' | 'manual' | 'failed' | 'unauthorized'
   console.log('connection:', state, stopReason);
 });
 ```
@@ -180,7 +180,7 @@ transport.onConnectionStateChange((state, stopReason) => {
 - `null`: the app says the stream is over. The transport stops reconnecting, closes, and moves to `disconnected` with stop reason `'resolver'`. It is not a failure and does not set `stream.error`.
 - a throw or rejection: counts as one failed attempt, like a network error (backoff, then `failed` after `maxAttempts`).
 
-The stop reason is on `transport.getStopReason()` and is the second argument of `onConnectionStateChange` for `disconnected` and `failed`: `'terminal'`, `'replay_unavailable'`, `'resolver'`, `'manual'` (`disconnect()`), or `'failed'`. It is `null` while the transport runs. The first stop reason holds until the next `connect()` or `reconnect()`: `disconnect()` on a transport that already stopped keeps that reason (and state) and sends no event.
+The stop reason is on `transport.getStopReason()` and is the second argument of `onConnectionStateChange` for `disconnected` and `failed`: `'terminal'`, `'replay_unavailable'`, `'resolver'`, `'manual'` (`disconnect()`), `'failed'`, or `'unauthorized'` (a 403 that `refreshToken` did not fix). It is `null` while the transport runs. The first stop reason holds until the next `connect()` or `reconnect()`: `disconnect()` on a transport that already stopped keeps that reason (and state) and sends no event.
 
 A signed URL that returns `null` when the server answers 409:
 
@@ -205,9 +205,40 @@ const transport = new SSETransport({
 
 A Laravel signed stream URL must ignore the `cursor` parameter (`$request->hasValidSignatureWhileIgnoring(['cursor'])`), or use `resolveUrl` to fetch a fresh one.
 
+### Stream token (core 0.3)
+
+Core 0.3 adds a stream token to `stream_url` (`token`). Pass the URL as the server gives it. The token expires: give the transport `refreshToken`, a function that returns a fresh `$handle->streamToken()` from your app, or `null`. On 403 `stream_token_expired` the transport calls it once and retries. `null`, another 403 code or a second 403 stops it with `'unauthorized'`. `EventSource` cannot read a status, so with `refreshToken` set `SSETransport` checks a failed connection once with `fetch`.
+
+## Broadcast (core 0.3)
+
+```ts
+import { AgenticStream, createStreamTransport, streamChannelAuthorizer } from '@agenticgraph/stream-client';
+import Echo from 'laravel-echo';
+
+window.Echo = new Echo({
+  broadcaster: 'reverb',
+  // ...your Reverb or Pusher settings
+  channelAuthorization: { customHandler: streamChannelAuthorizer({ fallback: appChannelHandler }) },
+});
+
+// descriptor = $handle->stream()->toArray() from your start endpoint
+const transport = createStreamTransport(descriptor, {
+  echo: window.Echo, // needed for a broadcast descriptor
+  refreshToken: async () => (await (await fetch(`/runs/${runId}/stream-token`)).json()).token,
+});
+const stream = await AgenticStream.connect({ transport });
+```
+
+- `createStreamTransport()` returns `SSETransport` or `BroadcastTransport` from `descriptor.transport`. Your handlers, hooks and selectors do not change.
+- The channel is private. `streamChannelAuthorizer()` answers Echo's channel auth for stream channels with the token and `auth_url` of the transport. Echo has one handler per instance, so pass your own as `fallback` for your other private channels.
+- `BroadcastTransport` waits for the subscription to be confirmed, replays from the store (following `more`), merges by seq, unpacks `batch` frames and drops duplicates. A hole in seq starts one replay after 250 ms. A `completed` or `failed` terminal stops it; `stream_close` without the terminal replays at once; no frame for `idleMs` (5000) while streaming replays, then after 10 s, 20 s and every 30 s. `interrupted` keeps it connected.
+- Stop reasons as on SSE: `'terminal'`, `'replay_unavailable'` (replay `gone`), `'resolver'` (`resolveReplayUrl` returned `null`), `'manual'`, `'unauthorized'` (403 or channel auth refused).
+- Queue the run on the server: on the `sync` queue the web request runs the whole broadcast run.
+- `EchoTransport` is deprecated. It works only with `AGENTICGRAPH_STREAM_BROADCAST_PRIVATE=false` and `AGENTICGRAPH_STREAM_BROADCAST_BATCH_MS=0`.
+
 ## Final state
 
-The terminal event (`execution_terminal` on SSE, `stream_close` on a broadcast) carries `final_state`, typed `Record<string, unknown> | null`. It is `null` unless the server sets `AGENTICGRAPH_STREAM_EXPOSE_FINAL_STATE=true`, and then holds only the keys in `AGENTICGRAPH_STREAM_FINAL_STATE_KEYS` when that is set (wire contract v1.1). Handle `null`, or fetch what you need from your own status endpoint.
+The terminal event (`execution_terminal`, on SSE and on broadcast; `stream_close` only on the deprecated `EchoTransport`) carries `final_state`, typed `Record<string, unknown> | null`. It is `null` unless the server sets `AGENTICGRAPH_STREAM_EXPOSE_FINAL_STATE=true`, and then holds only the keys in `AGENTICGRAPH_STREAM_FINAL_STATE_KEYS` when that is set (wire contract v1.1). Handle `null`, or fetch what you need from your own status endpoint.
 
 ## Development
 
@@ -222,6 +253,12 @@ Run the SSE integration harness against a live Laravel app (set `SSE_APP_PATH`; 
 
 ```bash
 npm run integration:sse
+```
+
+Run the parity harness: one scenario set over `SSETransport` and `BroadcastTransport`, results compared. It uses runs recorded from core 0.3, a Node fake server and a fake Echo, so it needs no PHP and no Reverb:
+
+```bash
+npm run integration:parity
 ```
 
 ## License

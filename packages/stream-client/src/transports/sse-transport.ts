@@ -5,6 +5,7 @@ import type {
   StreamTransportStopReason,
 } from '../transport.js';
 import type { EventSourceFactory, EventSourceLike, SSETransportOptions } from './sse-types.js';
+import { streamErrorCode, withQuery } from './url.js';
 import { wireToStreamEvent } from './wire-event.js';
 
 const SSE_EVENT_TYPES = [
@@ -49,19 +50,10 @@ function defaultEventSourceFactory(url: string): EventSourceLike {
 
 /**
  * Adds `custom_events=wrap` (author-defined events arrive as `custom_event`, a name the browser
- * can listen for; a server before core 0.2.1 ignores it) and the resume cursor. A relative URL stays relative.
+ * can listen for; a server before core 0.2.1 ignores it), the resume cursor and a refreshed token.
  */
-function withParams(baseUrl: string, cursor: number | null): string {
-  const relative = !/^[a-z][a-z0-9+.-]*:/i.test(baseUrl);
-  const url = new URL(baseUrl, typeof window !== 'undefined' ? window.location.href : 'http://localhost');
-
-  url.searchParams.set('custom_events', 'wrap');
-
-  if (cursor !== null) {
-    url.searchParams.set('cursor', String(cursor));
-  }
-
-  return relative ? `${url.pathname}${url.search}${url.hash}` : url.toString();
+function withParams(baseUrl: string, cursor: number | null, token: string | null = null): string {
+  return withQuery(baseUrl, { custom_events: 'wrap', cursor: cursor === null ? null : String(cursor), token });
 }
 
 function controlName(data: unknown): string | null {
@@ -94,6 +86,14 @@ export class SSETransport implements StreamTransport {
 
   private readonly resolveUrl: SSETransportOptions['resolveUrl'];
 
+  private readonly refreshToken: SSETransportOptions['refreshToken'];
+
+  /** Token from refreshToken; replaces the URL's `token`. */
+  private token: string | null = null;
+
+  /** refreshToken already ran since the last successful open: the next 403 stops. */
+  private refreshed = false;
+
   private eventSource: EventSourceLike | null = null;
 
   private eventCallback: ((event: StreamEvent) => void) | null = null;
@@ -123,6 +123,7 @@ export class SSETransport implements StreamTransport {
     this.baseDelayMs = options.baseDelayMs ?? 500;
     this.maxDelayMs = options.maxDelayMs ?? 10000;
     this.resolveUrl = options.resolveUrl;
+    this.refreshToken = options.refreshToken;
   }
 
   async connect(): Promise<void> {
@@ -135,7 +136,7 @@ export class SSETransport implements StreamTransport {
     this.stopped = false;
     this.stopReason = null;
     this.failures = 0;
-    this.openEventSource(withParams(this.baseUrl, this.lastSeq), 'connecting');
+    this.openEventSource(withParams(this.baseUrl, this.lastSeq, this.token), 'connecting');
   }
 
   async disconnect(): Promise<void> {
@@ -216,6 +217,7 @@ export class SSETransport implements StreamTransport {
 
     eventSource.onopen = () => {
       this.failures = 0;
+      this.refreshed = false;
       this.setConnectionState('connected');
     };
     eventSource.onerror = () => {
@@ -244,17 +246,68 @@ export class SSETransport implements StreamTransport {
       return;
     }
 
-    this.openEventSource(withParams(url, this.lastSeq), 'reconnecting');
+    this.openEventSource(withParams(url, this.lastSeq, this.token), 'reconnecting');
   }
 
   /** Error or end of response: close at once (no native retry), then back off or give up. */
   private handleFailure(): void {
+    const url = this.eventSource?.url ?? null;
     this.closeEventSource();
 
     if (this.stopped) {
       return;
     }
 
+    if (this.refreshToken && url !== null) {
+      void this.checkToken(url);
+
+      return;
+    }
+
+    this.retryAfterFailure();
+  }
+
+  /** Spec 5.3: read the status EventSource hides. 403 expired: refresh once and reopen; any other 403: stop. */
+  private async checkToken(url: string): Promise<void> {
+    const controller = new AbortController();
+    let response: Response | null = null;
+
+    try {
+      response = await fetch(url, { signal: controller.signal, headers: { Accept: 'text/event-stream' } });
+    } catch {
+      // network error: the normal backoff
+    }
+
+    if (response?.status !== 403) {
+      controller.abort();
+
+      if (!this.stopped) {
+        this.retryAfterFailure();
+      }
+
+      return;
+    }
+
+    const expired = (await streamErrorCode(response)) === 'stream_token_expired';
+    const next = expired && !this.refreshed && this.refreshToken ? await this.refreshToken().catch(() => null) : null;
+
+    if (this.stopped) {
+      return;
+    }
+
+    if (next) {
+      this.token = next;
+      this.refreshed = true;
+      this.setConnectionState('reconnecting');
+      void this.reopen();
+
+      return;
+    }
+
+    this.stop('disconnected', 'unauthorized');
+  }
+
+  private retryAfterFailure(): void {
     this.failures += 1;
 
     if (this.failures > this.maxAttempts) {

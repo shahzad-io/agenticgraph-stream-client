@@ -1,7 +1,8 @@
 import { mount, flushPromises } from '@vue/test-utils';
 import { defineComponent, nextTick } from 'vue';
 import { describe, expect, it, vi } from 'vitest';
-import { MockTransport, SSETransport, type EventSourceLike } from '@agenticgraph/stream-client';
+import { BroadcastTransport, MockTransport, SSETransport, type EventSourceLike } from '@agenticgraph/stream-client';
+import { fakeEcho, fakeRoutes, loadRuns } from '../../stream-client/src/testing/broadcast-fakes.js';
 import {
   makeExecutionTerminalEvent,
   makeNodeCompleteEvent,
@@ -349,5 +350,24 @@ describe('useStreamSelector (Vue)', () => {
     expect(result.status.value).toBe('streaming');
     expect(result.error.value).toBeNull();
     expect(result.text.value).toBe('hi');
+  });
+
+  it('streams a recorded core 0.3 broadcast run through BroadcastTransport: lost frames come from the store', async () => {
+    const run = loadRuns().streamed!;
+    const routes = fakeRoutes(run, { visible: 0 });
+    vi.stubGlobal('fetch', routes.fetch);
+    const echo = fakeEcho();
+    const id = run.stored[0]!.body.stream_id as string;
+    const transport = new BroadcastTransport({ echo: echo.echo, channel: `private-agenticgraph.stream.${id}`, replayUrl: `/s/${id}/events`, token: 't1' });
+    const { result } = mountComposable(() => useAgenticStream({ transport }));
+
+    await waitForClient(result);
+    routes.visible = run.stored.length;
+    run.broadcast.filter((_, i) => i < 11 || i > 14).forEach((frame) => echo.push(frame));
+
+    await vi.waitFor(() => expect(result.status.value).toBe('complete'));
+    expect(result.text.value).toBe(run.text);
+    expect(result.finalText.value).toBe(run.text);
+    vi.unstubAllGlobals();
   });
 });

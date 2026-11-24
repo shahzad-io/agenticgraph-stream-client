@@ -322,7 +322,8 @@ async function follow(url, { until = ['complete', 'error'], timeoutMs = 90_000, 
 /** The stored stream, read raw from the normal server until a completed or failed terminal. */
 async function readStored(streamUrl) {
   const url = new URL(streamUrl);
-  const response = await fetch(`${LONG}${url.pathname}`, { headers: { Accept: 'text/event-stream' } });
+  // Keep the query: core 0.3 puts the stream token in it.
+  const response = await fetch(`${LONG}${url.pathname}${url.search}`, { headers: { Accept: 'text/event-stream' } });
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   const events = [];
@@ -546,7 +547,9 @@ async function check5(streamUrl) {
   { cwd: APP_DIR, env: PHP_ENV, encoding: 'utf8' });
   const firstSeq = Number(String(truncate.stdout).trim().split('\n').pop());
 
-  const run = await (await follow(`${streamUrl}?cursor=2`, { timeoutMs: 15_000 })).done;
+  const gone = new URL(streamUrl);
+  gone.searchParams.set('cursor', '2');
+  const run = await (await follow(gone.toString(), { timeoutMs: 15_000 })).done;
   await sleep(2_000);
   const summary = connectionSummary(run);
 

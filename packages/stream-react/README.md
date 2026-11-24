@@ -23,6 +23,22 @@ function Chat({ streamId }: { streamId: string }) {
 
 `text` holds every `text_delta` of the run (every step); `finalText` the current or last step, so after a tool run the final answer.
 
+Broadcast (core 0.3): build the transport from the descriptor with `createStreamTransport()`. The hook does not change. Echo setup with `streamChannelAuthorizer()`: the [stream-client README](https://www.npmjs.com/package/@agenticgraph/stream-client).
+
+```tsx
+import { createStreamTransport, type StreamDescriptor } from '@agenticgraph/stream-client';
+import { useAgenticStream } from '@agenticgraph/stream-react';
+import { useMemo } from 'react';
+
+function Chat({ descriptor }: { descriptor: StreamDescriptor }) {
+  // descriptor = $handle->stream()->toArray(); make the transport once per stream
+  const transport = useMemo(() => createStreamTransport(descriptor, { echo: window.Echo }), [descriptor]);
+  const { text, status } = useAgenticStream({ transport });
+
+  return <p>{text} ({status})</p>;
+}
+```
+
 Requires React 18+. Guide: [agenticgraph.dev/docs/stream-getting-started](https://agenticgraph.dev/docs/stream-getting-started); more in the [repository README](https://github.com/shahzad-io/agenticgraph-stream-client#readme).
 
 ## Compatibility

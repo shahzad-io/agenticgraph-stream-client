@@ -1,6 +1,7 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import { MockTransport } from '@agenticgraph/stream-client';
+import { BroadcastTransport, MockTransport } from '@agenticgraph/stream-client';
+import { fakeEcho, fakeRoutes, loadRuns } from '../../stream-client/src/testing/broadcast-fakes.js';
 import {
   makeExecutionTerminalEvent,
   makeNodeCompleteEvent,
@@ -518,5 +519,30 @@ describe('useAgenticStream when connect() rejects (React)', () => {
     await waitFor(() => expect(hook.result.current.status).toBe('streaming'));
     expect(hook.result.current.error).toBeNull();
     expect(hook.result.current.text).toBe('hi');
+  });
+
+  it('streams a recorded core 0.3 broadcast run through BroadcastTransport: lost frames come from the store', async () => {
+    const run = loadRuns().streamed!;
+    const routes = fakeRoutes(run, { visible: 0 });
+    vi.stubGlobal('fetch', routes.fetch);
+    const echo = fakeEcho();
+    const id = run.stored[0]!.body.stream_id as string;
+    const transport = new BroadcastTransport({ echo: echo.echo, channel: `private-agenticgraph.stream.${id}`, replayUrl: `/s/${id}/events`, token: 't1' });
+    const hook = renderHook(() => useAgenticStream({ transport }));
+
+    await waitFor(() => {
+      expect(hook.result.current.client).not.toBeNull();
+    });
+    routes.visible = run.stored.length;
+    act(() => {
+      run.broadcast.filter((_, i) => i < 11 || i > 14).forEach((frame) => echo.push(frame));
+    });
+
+    await waitFor(() => {
+      expect(hook.result.current.status).toBe('complete');
+    });
+    expect(hook.result.current.text).toBe(run.text);
+    expect(hook.result.current.finalText).toBe(run.text);
+    vi.unstubAllGlobals();
   });
 });

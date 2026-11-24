@@ -40,6 +40,9 @@ type WireHandler = (eventName: string, body: unknown) => void;
 /**
  * Broadcast transport - wraps a consumer-provided Echo instance (never creates Echo).
  * Events during a connection drop are lost (fire-and-forget broadcast).
+ *
+ * @deprecated Use `BroadcastTransport` (or `createStreamTransport()`) with core 0.3. EchoTransport works only with
+ * `streaming.broadcast.private = false` and `batch_ms = 0`, and has no replay, order or dedupe. Removal in a later minor.
  */
 export class EchoTransport implements StreamTransport {
   private readonly echo: EchoInstance;

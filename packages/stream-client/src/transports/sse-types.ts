@@ -37,6 +37,12 @@ export interface SSETransportOptions {
    * rejection counts as a failed attempt.
    */
   resolveUrl?: (lastSeq: number | null) => Promise<string | null> | string | null;
+  /**
+   * Called once when the route answers 403 `stream_token_expired`. Return a fresh token (`$handle->streamToken()`):
+   * the transport reopens with it as `token`. Null, another 403 code, or a second 403 stops it with `unauthorized`.
+   * EventSource cannot read a status, so with this option a failed connection is checked once with `fetch`.
+   */
+  refreshToken?: () => Promise<string | null>;
 }
 
 export const EVENT_SOURCE_CONNECTING = 0;

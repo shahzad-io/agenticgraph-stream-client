@@ -26,6 +26,19 @@ const { text, status, error } = useAgenticStream({
 
 `text` holds every `text_delta` of the run (every step); `finalText` the current or last step, so after a tool run the final answer.
 
+Broadcast (core 0.3): build the transport from the descriptor with `createStreamTransport()`. The hook does not change. Echo setup with `streamChannelAuthorizer()`: the [stream-client README](https://www.npmjs.com/package/@agenticgraph/stream-client).
+
+```vue
+<script setup lang="ts">
+import { createStreamTransport, type StreamDescriptor } from '@agenticgraph/stream-client';
+import { useAgenticStream } from '@agenticgraph/stream-vue';
+
+const props = defineProps<{ descriptor: StreamDescriptor }>();
+// descriptor = $handle->stream()->toArray(); one transport per stream
+const { text, status } = useAgenticStream({ transport: createStreamTransport(props.descriptor, { echo: window.Echo }) });
+</script>
+```
+
 Requires Vue 3.4+. Guide: [agenticgraph.dev/docs/stream-getting-started](https://agenticgraph.dev/docs/stream-getting-started); more in the [repository README](https://github.com/shahzad-io/agenticgraph-stream-client#readme).
 
 ## Compatibility

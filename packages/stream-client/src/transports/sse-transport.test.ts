@@ -551,3 +551,46 @@ describe('SSETransport custom events', () => {
     expect(received.map((event) => event.eventType)).toEqual(['text_delta']);
   });
 });
+
+describe('SSETransport refreshToken (spec 5.3)', () => {
+  it('on 403 stream_token_expired refreshes once and reopens with the new token; a second 403 stops with unauthorized', async () => {
+    const statuses: Record<string, number> = { t1: 403, t2: 200 };
+    const probes: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      const token = new URL(url, 'http://localhost').searchParams.get('token') as string;
+      probes.push(token);
+
+      return statuses[token] === 403
+        ? Response.json({ error: 'stream_token_expired' }, { status: 403 })
+        : new Response('', { status: 200 });
+    }));
+    const refreshToken = vi.fn(async () => 't2');
+    const { transport, fakes, send, received, last } = setup({ url: 'http://localhost/streams/s1?token=t1', refreshToken });
+
+    await transport.connect();
+    last().fail();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(refreshToken).toHaveBeenCalledTimes(1);
+    expect(fakes).toHaveLength(2);
+    expect(new URL(fakes[1]!.url).searchParams.get('token')).toBe('t2');
+
+    last().open();
+    send(last(), 1);
+    expect(received).toHaveLength(1);
+
+    // t2 expires too: refreshToken runs once per failure, after an open; a 403 right after a refresh stops.
+    statuses.t2 = 403;
+    refreshToken.mockResolvedValueOnce('t2');
+    last().fail();
+    await vi.advanceTimersByTimeAsync(0);
+    last().fail();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(probes).toEqual(['t1', 't2', 't2']);
+    expect(refreshToken).toHaveBeenCalledTimes(2);
+    expect(transport.getStopReason()).toBe('unauthorized');
+    expect(transport.getConnectionState()).toBe('disconnected');
+    vi.unstubAllGlobals();
+  });
+});
