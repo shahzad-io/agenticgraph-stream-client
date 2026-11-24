@@ -45,13 +45,19 @@ export function useAgenticStream(options: UseAgenticStreamOptions): {
   let unsubEvents: (() => void) | undefined;
   let unsubStatus: (() => void) | undefined;
   let stream: AgenticStream | null = null;
-  let cancelled = false;
+  let connecting: StreamTransport | null = null;
+  /** Bumped by every cleanup: a connect() that started before it is stale. */
+  let generation = 0;
 
   async function connect(transport: StreamTransport): Promise<void> {
+    const mine = generation;
+    connecting = transport;
+    let connected: AgenticStream;
+
     try {
-      stream = await AgenticStream.connect({ transport });
+      connected = await AgenticStream.connect({ transport });
     } catch (failure) {
-      if (!cancelled) {
+      if (mine === generation) {
         status.value = 'error';
         error.value = { kind: 'connection', message: failure instanceof Error ? failure.message : String(failure), canReconnect: false };
       }
@@ -59,12 +65,14 @@ export function useAgenticStream(options: UseAgenticStreamOptions): {
       return;
     }
 
-    if (cancelled) {
-      await stream.disconnect();
+    if (mine !== generation) {
+      await connected.disconnect();
 
       return;
     }
 
+    connecting = null;
+    stream = connected;
     client.value = stream;
     status.value = stream.status;
     error.value = stream.error;
@@ -88,8 +96,11 @@ export function useAgenticStream(options: UseAgenticStreamOptions): {
     unsubStatus?.();
     unsubEvents = undefined;
     unsubStatus = undefined;
-    void stream?.disconnect();
+    generation += 1;
+    // Still connecting: stop the transport by hand, so it does not go on trying. connect() then resolves.
+    void (stream ? stream.disconnect() : connecting?.disconnect());
     stream = null;
+    connecting = null;
     client.value = null;
     text.value = '';
     finalText.value = '';
@@ -103,16 +114,12 @@ export function useAgenticStream(options: UseAgenticStreamOptions): {
     () => options.transport,
     (transport) => {
       cleanup();
-      cancelled = false;
       void connect(transport);
     },
     { immediate: true },
   );
 
-  onUnmounted(() => {
-    cancelled = true;
-    cleanup();
-  });
+  onUnmounted(cleanup);
 
   async function resume(decision: unknown): Promise<void> {
     if (client.value === null) {

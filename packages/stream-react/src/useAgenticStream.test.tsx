@@ -1,6 +1,8 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
+import { StrictMode } from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import { MockTransport } from '@agenticgraph/stream-client';
+import { BroadcastTransport, MockTransport } from '@agenticgraph/stream-client';
+import { fakeEcho, fakeRoutes, loadRuns } from '../../stream-client/src/testing/broadcast-fakes.js';
 import {
   makeExecutionTerminalEvent,
   makeNodeCompleteEvent,
@@ -518,5 +520,81 @@ describe('useAgenticStream when connect() rejects (React)', () => {
     await waitFor(() => expect(hook.result.current.status).toBe('streaming'));
     expect(hook.result.current.error).toBeNull();
     expect(hook.result.current.text).toBe('hi');
+  });
+
+  it('streams a recorded core 0.3 broadcast run through BroadcastTransport: lost frames come from the store', async () => {
+    const run = loadRuns().streamed!;
+    const routes = fakeRoutes(run, { visible: 0 });
+    vi.stubGlobal('fetch', routes.fetch);
+    const echo = fakeEcho();
+    const id = run.stored[0]!.body.stream_id as string;
+    const transport = new BroadcastTransport({ echo: echo.echo, channel: `private-agenticgraph.stream.${id}`, replayUrl: `/s/${id}/events`, token: 't1' });
+    const hook = renderHook(() => useAgenticStream({ transport }));
+
+    await waitFor(() => {
+      expect(hook.result.current.client).not.toBeNull();
+    });
+    routes.visible = run.stored.length;
+    act(() => {
+      run.broadcast.filter((_, i) => i < 11 || i > 14).forEach((frame) => echo.push(frame));
+    });
+
+    await waitFor(() => {
+      expect(hook.result.current.status).toBe('complete');
+    });
+    expect(hook.result.current.text).toBe(run.text);
+    expect(hook.result.current.finalText).toBe(run.text);
+    vi.unstubAllGlobals();
+  });
+
+  it('unmount during connect stops the transport by hand, with no unhandled rejection', async () => {
+    const rejections: unknown[] = [];
+    const onRejection = (reason: unknown) => rejections.push(reason);
+    process.on('unhandledRejection', onRejection);
+    const echo = fakeEcho({ manualConfirm: true });
+    const transport = new BroadcastTransport({ echo: echo.echo, channel: 'private-agenticgraph.stream.s1', replayUrl: '/s/s1/events', token: 't1' });
+    const hook = renderHook(() => useAgenticStream({ transport }));
+
+    await act(async () => {
+      await new Promise((done) => setTimeout(done, 5));
+    });
+    expect(transport.getConnectionState()).toBe('connecting');
+    hook.unmount();
+    await new Promise((done) => setTimeout(done, 20));
+    process.off('unhandledRejection', onRejection);
+
+    expect(transport.getStopReason()).toBe('manual');
+    expect(echo.log).toContain('leave agenticgraph.stream.s1');
+    expect(rejections).toEqual([]);
+  });
+  it('StrictMode: the second effect keeps the transport; the remount ends with one connected stream that completes', async () => {
+    const run = loadRuns().streamed!;
+    const routes = fakeRoutes(run, { visible: 0 });
+    vi.stubGlobal('fetch', routes.fetch);
+    const echo = fakeEcho();
+    const id = run.stored[0]!.body.stream_id as string;
+    const transport = new BroadcastTransport({ echo: echo.echo, channel: `private-agenticgraph.stream.${id}`, replayUrl: `/s/${id}/events`, token: 't1' });
+    const hook = renderHook(() => useAgenticStream({ transport }), { wrapper: StrictMode });
+
+    await waitFor(() => {
+      expect(hook.result.current.client).not.toBeNull();
+    });
+    await act(async () => {
+      await new Promise((done) => setTimeout(done, 20));
+    });
+
+    expect(transport.getStopReason()).toBeNull();
+    expect(transport.getConnectionState()).toBe('connected');
+    expect(echo.log.at(-1)).toBe(`subscribe private-agenticgraph.stream.${id}`);
+
+    routes.visible = run.stored.length;
+    act(() => {
+      run.broadcast.forEach((frame) => echo.push(frame));
+    });
+    await waitFor(() => {
+      expect(hook.result.current.status).toBe('complete');
+    });
+    expect(hook.result.current.text).toBe(run.text);
+    vi.unstubAllGlobals();
   });
 });

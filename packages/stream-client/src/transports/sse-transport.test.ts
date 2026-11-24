@@ -98,11 +98,14 @@ function setup(options: Partial<SSETransportOptions> = {}) {
 beforeEach(() => {
   vi.useFakeTimers();
   vi.spyOn(Math, 'random').mockReturnValue(0.5);
+  // The probe after each error (spec 5.3): by default the route answers 200, so the normal backoff runs.
+  vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 200 })));
 });
 
 afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe('SSETransport', () => {
@@ -413,6 +416,7 @@ describe('SSETransport', () => {
     const failed = setup({ maxAttempts: 0 });
     await failed.transport.connect();
     failed.last().fail();
+    await vi.advanceTimersByTimeAsync(0);
     await failed.transport.disconnect();
 
     expect(terminal.transport.getStopReason()).toBe('terminal');
@@ -428,6 +432,7 @@ describe('SSETransport', () => {
 
     await transport.connect();
     last().fail();
+    await vi.advanceTimersByTimeAsync(0);
     expect(transport.getStopReason()).toBe('failed');
 
     await transport.reconnect();
@@ -442,6 +447,7 @@ describe('SSETransport', () => {
     last().open();
     send(last(), 5);
     last().fail();
+    await vi.advanceTimersByTimeAsync(0);
     expect(transport.getConnectionState()).toBe('failed');
 
     await transport.reconnect();
@@ -549,5 +555,67 @@ describe('SSETransport custom events', () => {
     send(last(), 2);
 
     expect(received.map((event) => event.eventType)).toEqual(['text_delta']);
+  });
+});
+
+describe('SSETransport refreshToken (spec 5.3)', () => {
+  it('on 403 stream_token_expired refreshes once and reopens with the new token; a second 403 stops with unauthorized', async () => {
+    const statuses: Record<string, number> = { t1: 403, t2: 200 };
+    const probes: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      const token = new URL(url, 'http://localhost').searchParams.get('token') as string;
+      probes.push(token);
+
+      return statuses[token] === 403
+        ? Response.json({ error: 'stream_token_expired' }, { status: 403 })
+        : new Response('', { status: 200 });
+    }));
+    const refreshToken = vi.fn(async () => 't2');
+    const { transport, fakes, send, received, last } = setup({ url: 'http://localhost/streams/s1?token=t1', refreshToken });
+
+    await transport.connect();
+    last().fail();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(refreshToken).toHaveBeenCalledTimes(1);
+    expect(fakes).toHaveLength(2);
+    expect(new URL(fakes[1]!.url).searchParams.get('token')).toBe('t2');
+
+    last().open();
+    send(last(), 1);
+    expect(received).toHaveLength(1);
+
+    // t2 expires too: refreshToken runs once per failure, after an open; a 403 right after a refresh stops.
+    statuses.t2 = 403;
+    refreshToken.mockResolvedValueOnce('t2');
+    last().fail();
+    await vi.advanceTimersByTimeAsync(0);
+    last().fail();
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(probes).toEqual(['t1', 't2', 't2']);
+    expect(refreshToken).toHaveBeenCalledTimes(2);
+    expect(transport.getStopReason()).toBe('unauthorized');
+    expect(transport.getConnectionState()).toBe('disconnected');
+    vi.unstubAllGlobals();
+  });
+
+  it.each(['stream_token_expired', 'stream_token_invalid'])('403 %s with no refreshToken stops with unauthorized, not failed after maxAttempts', async (code) => {
+    const probe = vi.fn(async () => Response.json({ error: code }, { status: 403 }));
+    vi.stubGlobal('fetch', probe);
+    const { transport, fakes, stops, last } = setup({ url: 'http://localhost/streams/s1?token=t1', maxAttempts: 2 });
+
+    await transport.connect();
+
+    for (let i = 0; i < 3 && transport.getStopReason() === null; i += 1) {
+      last().fail();
+      await vi.advanceTimersByTimeAsync(10_000);
+    }
+
+    expect(transport.getStopReason()).toBe('unauthorized');
+    expect(stops).toEqual([['disconnected', 'unauthorized']]);
+    expect(probe).toHaveBeenCalledTimes(1);
+    expect(fakes).toHaveLength(1);
+    vi.unstubAllGlobals();
   });
 });

@@ -26,6 +26,19 @@ const { text, status, error } = useAgenticStream({
 
 `text` holds every `text_delta` of the run (every step); `finalText` the current or last step, so after a tool run the final answer.
 
+Broadcast (core 0.3): build the transport from the descriptor with `createStreamTransport()`. The hook does not change. Echo setup with `streamChannelAuthorizer()`: the [stream-client README](https://www.npmjs.com/package/@agenticgraph/stream-client).
+
+```vue
+<script setup lang="ts">
+import { createStreamTransport, type StreamDescriptor } from '@agenticgraph/stream-client';
+import { useAgenticStream } from '@agenticgraph/stream-vue';
+
+const props = defineProps<{ descriptor: StreamDescriptor }>();
+// descriptor = $handle->stream()->toArray(); one transport per stream
+const { text, status } = useAgenticStream({ transport: createStreamTransport(props.descriptor, { echo: window.Echo }) });
+</script>
+```
+
 Requires Vue 3.4+. Guide: [agenticgraph.dev/docs/stream-getting-started](https://agenticgraph.dev/docs/stream-getting-started); more in the [repository README](https://github.com/shahzad-io/agenticgraph-stream-client#readme).
 
 ## Compatibility
@@ -36,7 +49,7 @@ The three packages are released together:
 |---|---|---|
 | `agenticgraph/agenticgraph` (core) | 0.2.x | PHP 8.3+, Laravel 12.61.1+ or 13.12+, Prism 0.102 |
 | `agenticgraph/vector` | 0.1.x | PHP 8.3+, Laravel 12.61.1+ or 13.12+, Prism 0.102, PostgreSQL with pgvector (0.8+ for iterative scan). Core 0.2.x is optional (tracing) |
-| `@agenticgraph/stream-client`, `@agenticgraph/stream-react`, `@agenticgraph/stream-vue` | 0.1.x | Core 0.2.x on the server (stream wire contract v1.1; core 0.2.1 and client 0.1.1 together for custom events and error details), Node.js 18+, React 18+ or Vue 3.4+ for the adapters |
+| `@agenticgraph/stream-client`, `@agenticgraph/stream-react`, `@agenticgraph/stream-vue` | 0.2.x | Core 0.3.x on the server (stream wire contract v1.1; `BroadcastTransport` needs core 0.3.0; `SSETransport` also works with core 0.2.x), Node.js 18+, React 18+ or Vue 3.4+ for the adapters |
 
 ## License
 

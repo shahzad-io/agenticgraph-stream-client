@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AgenticStream } from './agentic-stream.js';
 import { MockTransport } from './transports/mock-transport.js';
 import { SSETransport } from './transports/sse-transport.js';
@@ -443,6 +443,58 @@ describe('connect() awaits connected state', () => {
   });
 });
 
+describe('connect() and a stop before connected', () => {
+  function pendingSse() {
+    return new SSETransport({
+      url: 'http://localhost/streams/s1',
+      eventSourceFactory: (url) => ({
+        url,
+        onopen: null,
+        onerror: null,
+        readyState: 0,
+        addEventListener() {},
+        removeEventListener() {},
+        close() {},
+      }),
+    });
+  }
+
+  it('resolves when the transport is stopped by hand (disconnect) during connect', async () => {
+    const transport = pendingSse();
+    const connecting = AgenticStream.connect({ transport });
+    await transport.disconnect();
+
+    const outcome = await connecting.then((stream) => stream.status, (error: Error) => `rejected: ${error.message}`);
+
+    expect(outcome).toBe('idle');
+    expect(transport.getStopReason()).toBe('manual');
+  });
+
+  it('still rejects when the transport stops for another reason before connected', async () => {
+    const transport = new SSETransport({
+      url: 'http://localhost/streams/s1',
+      resolveUrl: () => null,
+      maxAttempts: 5,
+      eventSourceFactory: (url) => {
+        const source = { url, onopen: null, onerror: null, readyState: 0, addEventListener() {}, removeEventListener() {}, close() {} } as EventSourceLike;
+        queueMicrotask(() => source.onerror?.(new Event('error')));
+
+        return source;
+      },
+    });
+    vi.stubGlobal('fetch', async () => new Response('', { status: 200 }));
+    vi.useFakeTimers();
+
+    const connecting = AgenticStream.connect({ transport });
+    const outcome = connecting.then(() => 'resolved', (error: Error) => error.message);
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    expect(await outcome).toBe('Stream transport stopped before it connected: resolver');
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+});
+
 describe('status model and connection states', () => {
   it('moves from interrupted back to streaming on stream_resume and clears the interrupt', async () => {
     const transport = new MockTransport();
@@ -486,7 +538,13 @@ describe('status model and connection states', () => {
     await stream.disconnect();
   });
 
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  /** SSETransport over fake EventSources. The probe after each error (spec 5.3) gets 200: the normal backoff runs. */
   function failingSse(maxAttempts: number, resolveUrl?: () => string | null) {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 200 })));
     const sources: EventSourceLike[] = [];
     const transport = new SSETransport({
       url: 'http://localhost/streams/s1',
@@ -538,6 +596,7 @@ describe('status model and connection states', () => {
       payload: { delta: 'x', message_id: 'm', timestamp: 1 },
     });
     sources[0]!.onerror?.(new Event('error'));
+    await new Promise((done) => setTimeout(done, 0));
 
     expect(transport.getConnectionState()).toBe('failed');
     expect(stream.status).toBe('error');
@@ -727,6 +786,7 @@ describe('status model and connection states', () => {
     });
     transport._handleSseMessage('text_delta', body(4));
     sources[0]!.onerror?.(new Event('error'));
+    await new Promise((done) => setTimeout(done, 0));
     expect(stream.error).toMatchObject({ kind: 'connection', canReconnect: true });
 
     await stream.reconnect();
@@ -741,5 +801,25 @@ describe('status model and connection states', () => {
     expect(seqs).toEqual([4, 5]);
 
     await stream.disconnect();
+  });
+});
+
+describe('AgenticStream transport owner', () => {
+  it('disconnect() stops the transport only while this stream owns it (the last stream connected on it)', async () => {
+    const transport = new MockTransport();
+    const first = await AgenticStream.connect({ transport });
+    const second = await AgenticStream.connect({ transport });
+    const received: string[] = [];
+    second.on((event) => received.push(event.eventType));
+
+    await first.disconnect();
+    transport.emit(makeTextDeltaEvent('still here'));
+
+    expect(transport.getConnectionState()).toBe('connected');
+    expect(received).toEqual(['text_delta']);
+
+    await second.disconnect();
+
+    expect(transport.getConnectionState()).toBe('disconnected');
   });
 });

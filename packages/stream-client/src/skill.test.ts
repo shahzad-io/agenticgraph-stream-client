@@ -17,10 +17,12 @@ const CLASS_FILES: Record<string, string[]> = {
   AgenticStream: ['src/agentic-stream.ts'],
   transport: [
     'src/transports/sse-transport.ts',
+    'src/transports/broadcast-transport.ts',
     'src/transports/echo-transport.ts',
     'src/transports/mock-transport.ts',
   ],
   SSETransport: ['src/transports/sse-transport.ts'],
+  BroadcastTransport: ['src/transports/broadcast-transport.ts'],
   EchoTransport: ['src/transports/echo-transport.ts'],
   MockTransport: ['src/transports/mock-transport.ts'],
 };
@@ -30,7 +32,7 @@ function missingCalls(text: string): string[] {
   const missing: string[] = [];
 
   for (const [, receiver, method] of text.matchAll(
-    /\b(stream|AgenticStream|transport|SSETransport|EchoTransport|MockTransport)\.(\w+)\s*\(/g,
+    /\b(stream|AgenticStream|transport|SSETransport|BroadcastTransport|EchoTransport|MockTransport)\.(\w+)\s*\(/g,
   )) {
     const declaration = new RegExp(`^\\s+(?:static\\s+|async\\s+|private\\s+|readonly\\s+)*${method}\\s*\\(`, 'm');
     const declared = CLASS_FILES[receiver].some((file) => declaration.test(read(file)));
@@ -125,6 +127,11 @@ describe('agenticgraph-stream-client skill', () => {
     expect(objectKeys(skill, 'new SSETransport\\(\\{')).toContain('resolveUrl');
     expect(objectKeys(skill, 'new SSETransport\\(\\{').filter((k) => !sse.includes(k))).toEqual([]);
     expect(objectKeys(skill, 'new EchoTransport\\(\\{').filter((k) => !echo.includes(k))).toEqual([]);
+    const create = interfaceKeys('src/create-transport.ts', 'CreateStreamTransportOptions');
+    expect(objectKeys(skill, 'createStreamTransport\\(descriptor, \\{')).toContain('refreshToken');
+    expect(objectKeys(skill, 'createStreamTransport\\(descriptor, \\{').filter((k) => !create.includes(k))).toEqual([]);
+    const listed = /Options: (`\w+`(?:, `\w+`)*)\./.exec(skill)?.[1].match(/\w+/g) ?? [];
+    expect(listed).toEqual(interfaceKeys('src/transports/broadcast-types.ts', 'BroadcastTransportOptions'));
     expect(objectKeys(skill, 'AgenticStream\\.connect\\(\\{').filter((k) => !connect.includes(k))).toEqual([]);
   });
 

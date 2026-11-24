@@ -4,9 +4,23 @@ export { AsyncEventStream } from './stream/async-event-stream.js';
 export type { KnownEventHandler, StreamEventHandler } from './stream/async-event-stream.js';
 export type { StreamErrorDetail } from './stream/stream-error.js';
 export { MockTransport } from './transports/mock-transport.js';
+/** @deprecated Use `BroadcastTransport` or `createStreamTransport()` (core 0.3). */
 export { EchoTransport } from './transports/echo-transport.js';
 export { SSETransport } from './transports/sse-transport.js';
+export { BroadcastTransport } from './transports/broadcast-transport.js';
+export { createStreamTransport, streamChannelAuthorizer } from './create-transport.js';
+export type {
+  ChannelAuthorizationHandler,
+  CreateStreamTransportOptions,
+  StreamDescriptor,
+} from './create-transport.js';
 export type { EchoChannel, EchoInstance, EchoTransportOptions } from './transports/echo-types.js';
+export type {
+  BroadcastEchoChannel,
+  BroadcastEchoInstance,
+  BroadcastTransportOptions,
+  ReplayPage,
+} from './transports/broadcast-types.js';
 export type {
   EventSourceFactory,
   EventSourceLike,

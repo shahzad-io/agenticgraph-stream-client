@@ -107,7 +107,8 @@ export function useAgenticStream(options: UseAgenticStreamOptions): UseAgenticSt
       cancelled = true;
       unsubEvents?.();
       unsubStatus?.();
-      void stream?.disconnect();
+      // Still connecting: stop the transport by hand, so it does not go on trying. connect() then resolves.
+      void (stream ? stream.disconnect() : transport.disconnect());
     };
   }, [transport]);
 

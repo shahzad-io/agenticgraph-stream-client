@@ -20,7 +20,7 @@
  *   node scripts/sse-integration-harness.mjs stored <stream_url>   prints the stored stream
  *
  * Environment:
- *   SSE_APP_PATH     the Laravel app folder (default ../laravel-app next to this repo)
+ *   SSE_APP_PATH     the Laravel app folder (default ../workflow-agents, the sibling of this repo root)
  *   SSE_APP_HOST     host the servers bind to and the client calls (default 127.0.0.1)
  *   SSE_APP_PORT     first of three ports: normal server, short server, proxy (default 8711)
  *   SSE_HARNESS_OUT  folder for the JSON report (default <os tmpdir>/agenticgraph-sse-harness)
@@ -37,7 +37,8 @@ import { fileURLToPath } from 'node:url';
 import { AgenticStream, SSETransport, parseSseFrame } from '@agenticgraph/stream-client';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const APP_DIR = resolve(process.env.SSE_APP_PATH ?? resolve(__dirname, '../../laravel-app'));
+const REPO_ROOT = resolve(__dirname, '..');
+const APP_DIR = resolve(process.env.SSE_APP_PATH ?? resolve(REPO_ROOT, '../workflow-agents'));
 const HOST = process.env.SSE_APP_HOST ?? '127.0.0.1';
 const SCRATCH = process.env.SSE_HARNESS_OUT ?? resolve(tmpdir(), 'agenticgraph-sse-harness');
 const TOPIC = process.env.SSE_DEMO_TOPIC ?? 'how server-sent events reconnect after a dropped connection';
@@ -322,7 +323,8 @@ async function follow(url, { until = ['complete', 'error'], timeoutMs = 90_000, 
 /** The stored stream, read raw from the normal server until a completed or failed terminal. */
 async function readStored(streamUrl) {
   const url = new URL(streamUrl);
-  const response = await fetch(`${LONG}${url.pathname}`, { headers: { Accept: 'text/event-stream' } });
+  // Keep the query: core 0.3 puts the stream token in it.
+  const response = await fetch(`${LONG}${url.pathname}${url.search}`, { headers: { Accept: 'text/event-stream' } });
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   const events = [];
@@ -474,7 +476,8 @@ async function check3() {
       onEvent: (event) => {
         if (!dropped && event.eventType === 'text_delta') {
           dropped = true;
-          proxy.refuse = 2;
+          // Each error is followed by one fetch probe (spec 5.3), also a connection: 4 refused is 2 reopens and their probes.
+          proxy.refuse = 4;
           proxy.dropAll();
         }
       },
@@ -489,7 +492,7 @@ async function check3() {
 
     return {
       pass: run.stream.status === 'complete' && comparison.textEqual && comparison.seqsEqual
-        && summary.reconnects === 3 && proxy.refused === 2 && withinBackoff && !summary.failedState,
+        && summary.reconnects === 3 && proxy.refused === 4 && withinBackoff && !summary.failedState,
       status: run.stream.status,
       refusedByProxy: proxy.refused,
       attemptDelaysMs: attemptDelays,
@@ -546,7 +549,9 @@ async function check5(streamUrl) {
   { cwd: APP_DIR, env: PHP_ENV, encoding: 'utf8' });
   const firstSeq = Number(String(truncate.stdout).trim().split('\n').pop());
 
-  const run = await (await follow(`${streamUrl}?cursor=2`, { timeoutMs: 15_000 })).done;
+  const gone = new URL(streamUrl);
+  gone.searchParams.set('cursor', '2');
+  const run = await (await follow(gone.toString(), { timeoutMs: 15_000 })).done;
   await sleep(2_000);
   const summary = connectionSummary(run);
 

@@ -37,3 +37,6 @@ jobs:
 
       - name: Test
         run: npm test
+
+      - name: Parity harness (fakes)
+        run: npm run integration:parity

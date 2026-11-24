@@ -5,25 +5,27 @@ export type StreamTransportConnectionState =
   | 'connecting'
   | 'connected'
   | 'reconnecting'
-  /** Gave up after `maxAttempts` consecutive failed reconnects (SSETransport). */
+  /** Gave up after `maxAttempts` consecutive failed reconnects (SSETransport) or replays (BroadcastTransport). */
   | 'failed';
 
-/** Why a transport stopped (SSETransport). `null` while it is running or before it starts. */
+/** Why a transport stopped (SSETransport, BroadcastTransport). `null` while it is running or before it starts. */
 export type StreamTransportStopReason =
   /** A `completed` or `failed` execution terminal. */
   | 'terminal'
-  /** Control `replay_unavailable`: the cursor is older than anything the server stores. */
+  /** Control `replay_unavailable` (SSE) or replay `gone` (broadcast): the cursor is older than anything the server stores. */
   | 'replay_unavailable'
-  /** `resolveUrl` returned `null`: the app ended the stream. Not an error. */
+  /** `resolveUrl` / `resolveReplayUrl` returned `null`: the app ended the stream. Not an error. */
   | 'resolver'
   /** `disconnect()` was called. */
   | 'manual'
   /** Gave up after `maxAttempts` consecutive failures. */
-  | 'failed';
+  | 'failed'
+  /** 403 from a stream route or channel auth: invalid token, `refreshToken` gave none, or the app authorizer said no. */
+  | 'unauthorized';
 
 /**
  * Transport abstraction - core depends on this interface, not on Laravel Echo.
- * Implementations: EchoTransport, SSETransport, MockTransport (Phase 1).
+ * Implementations: SSETransport, BroadcastTransport, MockTransport; EchoTransport (deprecated).
  */
 export interface StreamTransport {
   connect(): Promise<void>;

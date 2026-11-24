@@ -1,20 +1,21 @@
 ---
 name: agenticgraph-stream-client
-description: "Consume AgenticGraph stream events in JavaScript with @agenticgraph/stream-client: connect an SSE or Echo transport, read status, interrupts and errors, reconnect, resolveUrl and stop reasons, signed URLs, selectors, the mock transport for tests, and the script-tag build."
+description: "Consume AgenticGraph stream events in JavaScript with @agenticgraph/stream-client: build a transport from the stream descriptor (SSE or broadcast over a private Echo channel), read status, interrupts and errors, reconnect, stream tokens and refreshToken, resolveUrl and stop reasons, selectors, the mock transport for tests, and the script-tag build."
 ---
 
 # AgenticGraph stream client (npm)
 
-Package: `@agenticgraph/stream-client` 0.1.x (0.1.1 or later). It needs AgenticGraph core 0.2.x on the server (wire contract v1.1); core 0.2.1 or later for custom events and error details. Server side (routes, `stream()`, `broadcast()`, resume): the `agenticgraph-streaming` skill in the Laravel package.
+Package: `@agenticgraph/stream-client`. `SSETransport` works with AgenticGraph core 0.2.x and 0.3.x (wire contract v1.1; core 0.2.1 or later for custom events and error details). `BroadcastTransport`, `createStreamTransport()` and `streamChannelAuthorizer()` need core 0.3.0. Server side (routes, stream token, `stream()`, `broadcast()`, resume): the `agenticgraph-streaming` skill in the Laravel package.
 
 Only `src/index.ts` exports are public. Every method and name below is checked against it by `src/skill.test.ts`.
 
 ## Rules
 
-- `AgenticStream.connect({ transport })` is the only way to build a stream. It resolves when the transport reports `connected`, and rejects if the transport reports `failed` first.
+- `AgenticStream.connect({ transport })` is the only way to build a stream. It resolves when the transport reports `connected`, or when the transport is stopped by hand (`transport.disconnect()`, stop reason `manual`) first. It rejects if the transport reports `failed`, or stops for any other reason (for example `unauthorized`), first. The React and Vue hooks stop the transport by hand when the component unmounts during connect.
+- Build the transport from the descriptor the server sends (`$handle->stream()->toArray()`) with `createStreamTransport(descriptor, { echo })`. The handlers do not change between SSE and broadcast.
 - One `connect()` per transport. With the React or Vue hook, the hook owns the connection: do not also call `connect()` on the same transport.
-- Use `SSETransport` when events must survive a drop. Use `EchoTransport` only when losing events during a drop is acceptable (it has no replay).
-- `SSETransport` reconnects by itself. Do not write a retry loop around it.
+- `SSETransport` and `BroadcastTransport` both give every stored event once, in seq order, after a drop or a late join. `EchoTransport` is deprecated: it loses events, drops `batch` frames and works only with `private = false` and `batch_ms = 0` on the server.
+- `SSETransport` and `BroadcastTransport` recover by themselves. Do not write a retry loop around them.
 - Read `transport.getStopReason()` to learn why a stream stopped. Do not guess from `status`.
 - In a Laravel app with Vite (the default), import the package from `resources/js/app.js` and load it with `@vite()`. Use the script-tag build only when there is no bundler. Never copy `dist/index.global.js` into `public/`.
 
@@ -51,15 +52,18 @@ stream.onStatusChange((status, snapshot) => render(status, snapshot.error));
 
 ## Stop reasons
 
-`transport.getStopReason()` is on `SSETransport`. It is `null` while the transport runs.
+`transport.getStopReason()` is on `SSETransport` and `BroadcastTransport`. It is `null` while the transport runs.
 
 | Reason | Meaning | Stream status |
 |---|---|---|
 | `terminal` | `execution_terminal` with `completed` or `failed` arrived | `complete`, or `error` with kind `terminal_error` for `failed` |
-| `replay_unavailable` | The cursor is older than the server keeps | `error`, `error.kind` is `replay_unavailable`, with `cursor` and `final_state` |
-| `resolver` | `resolveUrl` returned `null` | Unchanged. Not an error. |
+| `replay_unavailable` | The cursor is older than the server keeps (SSE control, or replay `gone` on broadcast) | `error`, `error.kind` is `replay_unavailable`, with `cursor` and `final_state` |
+| `resolver` | `resolveUrl` or `resolveReplayUrl` returned `null` | Unchanged. Not an error. |
 | `manual` | `disconnect()` was called | Unchanged |
-| `failed` | `maxAttempts` failures in a row | `error`, `connection` |
+| `failed` | More than `maxAttempts` failures in a row: reconnects (SSE) or replays (broadcast, network error or 5xx) | `error`, `connection` |
+| `unauthorized` | 403 from a stream route or from channel auth: invalid token, `refreshToken` gave no new token, or the app authorizer said no | `error`, `connection` with `canReconnect` false; `connect()` rejects if it happens before `connected` |
+
+An exhaustive `switch` over `StreamTransportStopReason` must handle `unauthorized`.
 
 `final_state` on `replay_unavailable` arrives only when the stream URL carries `execution_id`. Add it to the URL you pass to the transport.
 
@@ -83,26 +87,51 @@ const transport = new SSETransport({
 - Signed or expiring URLs: mint a fresh one in `resolveUrl`, from your own endpoint. The client adds `cursor` to whatever you return. If your server signs the whole query string, the signature fails once `cursor` is added. The server must validate the signature while ignoring `cursor`. The Laravel side is in the `agenticgraph-streaming` skill.
 - `EventSource` cannot send custom headers. Authenticate with same-origin cookies or with the signed URL.
 
-## Echo transport (broadcast)
+## Stream token and refreshToken (core 0.3)
+
+- Core 0.3 puts a stream token in `stream_url` and `replay_url` (query `token`) and in the descriptor (`token`). Pass the URLs as the server gives them. Do not build them yourself.
+- The token expires (`streaming.token.ttl`, 3600 s by default). Give the transport `refreshToken`: an async function that asks your app for `$handle->streamToken()` and returns it, or `null`.
+- On 403 `stream_token_expired` the transport calls `refreshToken` once and retries with the new token. `null`, any other 403 code, or a second 403 stops it with `unauthorized`.
+- `SSETransport` cannot read a status from `EventSource`. With `refreshToken` set, it checks a failed connection once with `fetch` to read the 403 code. Without `refreshToken`, a 403 counts as a normal failure and ends in `failed`.
+
+## Broadcast (BroadcastTransport, core 0.3)
 
 ```ts
-import { AgenticStream, EchoTransport } from '@agenticgraph/stream-client';
+import { AgenticStream, createStreamTransport, streamChannelAuthorizer } from '@agenticgraph/stream-client';
+import Echo from 'laravel-echo';
 
-const stream = await AgenticStream.connect({
-  transport: new EchoTransport({ echo: window.Echo, channel: payload.channel }),
+window.Echo = new Echo({
+  broadcaster: 'reverb',
+  // ...your Reverb or Pusher settings
+  channelAuthorization: { customHandler: streamChannelAuthorizer({ fallback: appChannelHandler }) },
 });
+
+// descriptor = $handle->stream()->toArray() from your start endpoint
+const transport = createStreamTransport(descriptor, {
+  echo: window.Echo,
+  refreshToken: async () => (await (await fetch(`/runs/${runId}/stream-token`)).json()).token,
+});
+const stream = await AgenticStream.connect({ transport });
 ```
 
-- `echo` is your configured Laravel Echo instance. The package never creates Echo. `laravel-echo` is an optional peer.
-- No cursor, no `resolveUrl`, no replay. Events sent before the subscription are lost. Subscribe before the kickoff request when you can.
-- `eventTypes` lists the event names to listen to when `listenToAll` is not available. The defaults cover the framework and Prism events.
+- `createStreamTransport()` returns `SSETransport` for `transport: 'sse'` and `BroadcastTransport` for `transport: 'broadcast'`. A broadcast descriptor without `echo` throws.
+- The channel is private (`private-agenticgraph.stream.{id}`). `streamChannelAuthorizer()` answers Echo's auth for stream channels with the token and `auth_url` of the transport that subscribed. Echo has one auth handler per instance: pass your own handler as `fallback` for your other private channels.
+- `BroadcastTransport` waits for the subscription to be confirmed, then reads the store through the replay route, and merges it with the live frames by seq. It unpacks `batch` frames, drops events it has seen, and holds frames after a hole until a replay fills it (250 ms debounce). The store decides: seq can have holes that exist nowhere (an event filter).
+- End: a `completed` or `failed` `execution_terminal` stops it (`terminal`). `stream_close` without the terminal starts a replay at once. With no frame for `idleMs` (5000) while connected and not interrupted it replays, then after 10 s, 20 s and every 30 s; a frame resets this. `interrupted` keeps it connected.
+- `stream_close` is not passed to handlers: on SSE it does not exist, so the handlers see the same events on both transports.
+- Options: `echo`, `channel`, `replayUrl`, `authUrl`, `token`, `refreshToken`, `resolveReplayUrl`, `idleMs`, `maxAttempts`. `resolveReplayUrl(cursor)` runs before each replay; `null` stops with `resolver`. A failed replay (network error or 5xx) is retried at the idle timer; when the failures in a row go past `maxAttempts` (5) it stops with `failed`, as on SSE. A replay that answers resets the count.
+- Queue the run on the server (not `sync`), or the web request runs the whole broadcast run.
+
+## Echo transport (deprecated)
+
+`EchoTransport` is deprecated and will be removed in a later minor version. It has no cursor, no replay, no order and no dedupe, and core 0.3 sends to a private channel in `batch` frames, which it does not read. It works only when the server sets `AGENTICGRAPH_STREAM_BROADCAST_PRIVATE=false` and `AGENTICGRAPH_STREAM_BROADCAST_BATCH_MS=0`. Move to `createStreamTransport()`.
 
 ## Script-tag build (IIFE, only when there is no bundler)
 
 With Vite, import the package from `resources/js/app.js` and load it with `@vite()`. With no bundler, load the pinned CDN build: `dist/index.global.js` sets the global `window.AgenticGraphStream`. The package exports it as `./iife`, and `unpkg` and `jsdelivr` point to it.
 
 ```html
-<script src="https://cdn.jsdelivr.net/npm/@agenticgraph/stream-client@0.1.2/dist/index.global.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@agenticgraph/stream-client@0.2.0/dist/index.global.js"></script>
 <script>
   const { AgenticStream, SSETransport } = window.AgenticGraphStream;
   AgenticStream.connect({ transport: new SSETransport({ url: streamUrl }) });
@@ -139,6 +168,8 @@ transport.simulateDrop();       // exercises the connection-drop path
 1. Two `connect()` calls on one transport, or `connect()` next to the React or Vue hook.
 2. A retry loop around `SSETransport`. It already reconnects, and `reconnect()` is only for after `failed`.
 3. Treating a transient drop as an error, or waiting for `status` to show one.
-4. Expecting `EchoTransport` to replay what was sent during a drop.
+4. Using `EchoTransport` with core 0.3, or expecting it to replay what was sent during a drop.
 5. A signed URL whose signature covers `cursor`.
 6. Returning `null` from `resolveUrl` for a network error. Throw instead: `null` stops the stream for good.
+7. Building the stream URL by hand with core 0.3: it has no token, so the route answers 403.
+8. A second Echo `customHandler` for stream channels. Use `streamChannelAuthorizer({ fallback })` as the only handler.
