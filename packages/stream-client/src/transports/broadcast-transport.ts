@@ -37,8 +37,9 @@ function terminalStatus(type: string, body: Record<string, unknown>): unknown {
  * confirmed cursor), merge by seq. Steady state: unpack `batch` frames, drop seen seq, hold frames above a hole and
  * replay after the confirmed cursor (debounced). End: a completed or failed `execution_terminal` stops the transport,
  * after a replay when a hole is open; `stream_close` without the terminal replays at once; no frame for `idleMs`
- * while connected and not interrupted replays with backoff. A failed replay is retried with the SSETransport reconnect
- * backoff (not at the idle timer); more than `maxAttempts` failed replays in a row stop it with `failed`. `interrupted` keeps it connected. `stream_close` is never passed on (SSE has none), so handlers see
+ * while connected replays with backoff; while interrupted it replays at the maximum interval. A failed replay is retried
+ * with the SSETransport reconnect backoff (not at the idle timer); more than `maxAttempts` failed replays in a row stop
+ * it with `failed`. `interrupted` keeps it connected. `stream_close` is never passed on (SSE has none), so handlers see
  * the same events as on SSE.
  */
 export class BroadcastTransport implements StreamTransport {
@@ -309,7 +310,7 @@ export class BroadcastTransport implements StreamTransport {
 
     if (status === 'interrupted' || type === 'node_interrupt') {
       this.interrupted = true;
-      this.clearIdle();
+      this.armIdle(true);
     } else if (type === 'stream_resume') {
       this.interrupted = false;
       this.armIdle(true);
@@ -437,7 +438,10 @@ export class BroadcastTransport implements StreamTransport {
     }
   }
 
-  /** Idle replay: no frame for idleMs, then 2x, 4x, then every 6x (5, 10, 20, 30 s by default). Reset on a frame. */
+  /**
+   * Idle replay: no frame for idleMs, then 2x, 4x, then every 6x (5, 10, 20, 30 s by default). Reset on a frame.
+   * While interrupted: every 6x, so a resume the socket did not deliver is found in the store.
+   */
   private armIdle(reset: boolean): void {
     if (reset) {
       this.idleRound = 0;
@@ -445,11 +449,12 @@ export class BroadcastTransport implements StreamTransport {
 
     this.clearIdle();
 
-    if (this.stopped || this.interrupted || this.connectionState !== 'connected') {
+    if (this.stopped || this.connectionState !== 'connected') {
       return;
     }
 
-    const delay = Math.min(this.idleMs * 2 ** this.idleRound, this.idleMs * 6);
+    const max = this.idleMs * 6;
+    const delay = this.interrupted ? max : Math.min(this.idleMs * 2 ** this.idleRound, max);
     this.idleTimer = setTimeout(() => {
       this.idleTimer = null;
       this.idleRound += 1;

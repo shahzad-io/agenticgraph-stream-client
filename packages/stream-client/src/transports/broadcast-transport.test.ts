@@ -250,7 +250,7 @@ describe(`broadcast contract (spec 8.3) on ${process.env.BROADCAST_TEST_TRANSPOR
     expect(at().length).toBe(before + 1);
   });
 
-  it('6. interrupted keeps the transport connected, with no idle replay, and the resumed segment completes', async () => {
+  it('6. interrupted keeps the transport connected, with no fast idle replay, and the resumed segment completes', async () => {
     const run = runs.interrupted as RecordedRun;
     const split = run.interrupt_at as number;
     const view = await (await follow(run, { transport: { idleMs: 40 } })).connected();
@@ -270,6 +270,62 @@ describe(`broadcast contract (spec 8.3) on ${process.env.BROADCAST_TEST_TRANSPOR
     await until(() => view.status === 'complete').catch(() => undefined);
 
     expectContract(view, run);
+  });
+
+  /** Interrupted run, live frames up to the interrupted terminal, the store up to the same seq. */
+  async function interruptedView(idleMs: number) {
+    const run = runs.interrupted as RecordedRun;
+    const split = run.interrupt_at as number;
+    const view = await (await follow(run, { transport: { idleMs } })).connected();
+    const interruptSeq = run.broadcast[split - 1]?.payload.seq as number;
+    view.begin(run.stored.filter((e) => e.body.seq <= interruptSeq).length);
+    view.push(run.broadcast.slice(0, split));
+
+    return { run, view };
+  }
+
+  it('6a. interrupted, then no live frame of the resumed run: the idle replay finds the resume and completes', async () => {
+    const { run, view } = await interruptedView(50);
+    await until(() => view.status === 'interrupted').catch(() => undefined);
+    view.begin();
+    await until(() => view.status === 'complete', 1000).catch(() => undefined);
+
+    expectContract(view, run);
+  });
+
+  it('6b. the sink stops during the resumed run: replays find the resume, then the rest', async () => {
+    const { run, view } = await interruptedView(50);
+    await until(() => view.status === 'interrupted').catch(() => undefined);
+    // The store has the resume and part of the resumed run, the rest later. No frame reaches the client.
+    view.begin(run.stored.filter((e) => e.body.seq <= 12).length);
+    await until(() => view.events.some((e) => e.eventType === 'stream_resume'), 1000).catch(() => undefined);
+    view.begin();
+    await until(() => view.status === 'complete', 1000).catch(() => undefined);
+
+    expectContract(view, run);
+  });
+
+  it('6c. an interrupt with no resume for 10 minutes makes one replay per 30 s, not more', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    const run = runs.interrupted as RecordedRun;
+    const split = run.interrupt_at as number;
+    const view = await follow(run, { transport: { idleMs: 5000 } });
+    await vi.advanceTimersByTimeAsync(1);
+    view.stream = await view.connecting;
+    await vi.advanceTimersByTimeAsync(20);
+    const interruptSeq = run.broadcast[split - 1]?.payload.seq as number;
+    view.begin(run.stored.filter((e) => e.body.seq <= interruptSeq).length);
+    view.push(run.broadcast.slice(0, split));
+    await vi.advanceTimersByTimeAsync(0);
+    const t0 = Date.now();
+    const before = view.routes.requests.length;
+    await vi.advanceTimersByTimeAsync(10 * 60_000 + 1);
+    const gaps = view.routes.requests.slice(before).map((r, i, all) => r.at - (i === 0 ? t0 : (all[i - 1] as { at: number }).at));
+
+    expect(view.stream?.status).toBe('interrupted');
+    expect(view.transport.getConnectionState()).toBe('connected');
+    expect(gaps.length).toBe(20);
+    expect(new Set(gaps.map((ms) => Math.round(ms / 10) * 10))).toEqual(new Set([30_000]));
   });
 
   it('7. replay gone stops with replay_unavailable', async () => {
