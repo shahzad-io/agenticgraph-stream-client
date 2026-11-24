@@ -4,6 +4,7 @@ import type {
   StreamTransportConnectionState,
   StreamTransportStopReason,
 } from '../transport.js';
+import { backoffDelayMs } from './backoff.js';
 import type { BroadcastEchoChannel, BroadcastTransportOptions, ReplayPage } from './broadcast-types.js';
 import { streamErrorCode, withQuery } from './url.js';
 import { normalizeEventName, wireToStreamEvent } from './wire-event.js';
@@ -36,8 +37,8 @@ function terminalStatus(type: string, body: Record<string, unknown>): unknown {
  * confirmed cursor), merge by seq. Steady state: unpack `batch` frames, drop seen seq, hold frames above a hole and
  * replay after the confirmed cursor (debounced). End: a completed or failed `execution_terminal` stops the transport,
  * after a replay when a hole is open; `stream_close` without the terminal replays at once; no frame for `idleMs`
- * while connected and not interrupted replays with backoff. More than `maxAttempts` failed replays in a row stop it
- * with `failed`. `interrupted` keeps it connected. `stream_close` is never passed on (SSE has none), so handlers see
+ * while connected and not interrupted replays with backoff. A failed replay is retried with the SSETransport reconnect
+ * backoff (not at the idle timer); more than `maxAttempts` failed replays in a row stop it with `failed`. `interrupted` keeps it connected. `stream_close` is never passed on (SSE has none), so handlers see
  * the same events as on SSE.
  */
 export class BroadcastTransport implements StreamTransport {
@@ -84,6 +85,8 @@ export class BroadcastTransport implements StreamTransport {
   private gapTimer: ReturnType<typeof setTimeout> | null = null;
 
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
+
+  private retryTimer: ReturnType<typeof setTimeout> | null = null;
 
   private idleRound = 0;
 
@@ -329,6 +332,7 @@ export class BroadcastTransport implements StreamTransport {
 
     this.replaying = true;
     this.clearGapTimer();
+    this.clearRetryTimer();
 
     try {
       do {
@@ -416,13 +420,17 @@ export class BroadcastTransport implements StreamTransport {
 
       return page;
     } catch {
-      // A failed replay (network, 5xx) is retried at the idle timer, up to maxAttempts in a row.
+      // A failed replay (network, 5xx) is retried with the SSETransport backoff, up to maxAttempts in a row.
       this.failures += 1;
 
       if (this.failures > this.maxAttempts) {
         this.stop('failed', 'failed');
-      } else {
-        this.armIdle(false);
+      } else if (!this.stopped) {
+        this.clearRetryTimer();
+        this.retryTimer = setTimeout(() => {
+          this.retryTimer = null;
+          void this.replay();
+        }, backoffDelayMs(this.failures));
       }
 
       return null;
@@ -457,6 +465,13 @@ export class BroadcastTransport implements StreamTransport {
     }
   }
 
+  private clearRetryTimer(): void {
+    if (this.retryTimer !== null) {
+      clearTimeout(this.retryTimer);
+      this.retryTimer = null;
+    }
+  }
+
   private clearGapTimer(): void {
     if (this.gapTimer !== null) {
       clearTimeout(this.gapTimer);
@@ -467,6 +482,7 @@ export class BroadcastTransport implements StreamTransport {
   private leaveChannel(): void {
     this.clearIdle();
     this.clearGapTimer();
+    this.clearRetryTimer();
     this.held.clear();
 
     if (streamChannelAuth.get(this.options.channel) === this.authorize) {

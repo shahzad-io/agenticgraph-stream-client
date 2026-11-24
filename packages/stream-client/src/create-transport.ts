@@ -19,6 +19,8 @@ export interface CreateStreamTransportOptions {
   echo?: BroadcastEchoInstance;
   /** Returns a fresh stream token (`$handle->streamToken()`) after it expired, or null. */
   refreshToken?: () => Promise<string | null>;
+  /** Passed to both transports: consecutive failures before state `failed` (default 5). */
+  maxAttempts?: number;
 }
 
 /** Builds `SSETransport` or `BroadcastTransport` from the descriptor the server sent. */
@@ -26,10 +28,10 @@ export function createStreamTransport(
   descriptor: StreamDescriptor,
   options: CreateStreamTransportOptions = {},
 ): StreamTransport {
-  const { refreshToken } = options;
+  const { refreshToken, maxAttempts } = options;
 
   if (descriptor.transport === 'sse' && descriptor.stream_url) {
-    return new SSETransport({ url: descriptor.stream_url, refreshToken });
+    return new SSETransport({ url: descriptor.stream_url, refreshToken, maxAttempts });
   }
 
   if (descriptor.transport === 'broadcast' && descriptor.channel && descriptor.replay_url) {
@@ -44,6 +46,7 @@ export function createStreamTransport(
       authUrl: descriptor.auth_url ?? undefined,
       token: descriptor.token,
       refreshToken,
+      maxAttempts,
     });
   }
 

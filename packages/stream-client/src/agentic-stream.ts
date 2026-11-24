@@ -22,6 +22,9 @@ export interface AgenticStreamConnectOptions {
   transport: StreamTransport;
 }
 
+/** The stream that connected last on each transport. Only that stream's disconnect() stops the transport. */
+const owners = new WeakMap<StreamTransport, AgenticStream>();
+
 export type StatusChangeHandler = (status: StreamStatus, snapshot: StreamStateSnapshot) => void;
 
 /**
@@ -146,8 +149,13 @@ export class AgenticStream {
     this.connectionStateUnsubscribe = null;
     this.transportEventHandler = null;
     this.eventStream.close();
-    await this.transport.disconnect();
     this.connected = false;
+
+    // A newer stream (React StrictMode remount, a remount during connect) took the transport: leave it running.
+    if (owners.get(this.transport) === this) {
+      owners.delete(this.transport);
+      await this.transport.disconnect();
+    }
   }
 
   /**
@@ -235,6 +243,7 @@ export class AgenticStream {
   }
 
   private bindTransport(): void {
+    owners.set(this.transport, this);
     this.transportEventHandler = (event: StreamEvent) => {
       this.handleEvent(event);
     };

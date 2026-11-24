@@ -249,7 +249,7 @@ npm test
 npm run typecheck
 ```
 
-Run the SSE integration harness against a live Laravel app (set `SSE_APP_PATH`; the other settings are in the script header):
+Run the SSE integration harness against a live Laravel app (default `../workflow-agents`, next to this repo; `SSE_APP_PATH` overrides it; the other settings are in the script header):
 
 ```bash
 npm run integration:sse

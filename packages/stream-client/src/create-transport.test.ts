@@ -29,6 +29,15 @@ describe('createStreamTransport', () => {
     expect(createStreamTransport(broadcast, { echo: fakeEcho().echo })).toBeInstanceOf(BroadcastTransport);
   });
 
+  it.each([
+    ['SSETransport', { ...broadcast, transport: 'sse' as const, stream_url: '/agentic-graph/streams/s?token=t1' }],
+    ['BroadcastTransport', broadcast],
+  ])('passes maxAttempts to %s', (_name, descriptor) => {
+    const transport = createStreamTransport(descriptor, { echo: fakeEcho().echo, maxAttempts: 2 });
+
+    expect((transport as unknown as { maxAttempts: number }).maxAttempts).toBe(2);
+  });
+
   it('throws a clear error for a broadcast descriptor without echo', () => {
     expect(() => createStreamTransport(broadcast)).toThrow(/needs \{ echo \}/);
   });

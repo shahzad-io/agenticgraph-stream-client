@@ -409,3 +409,32 @@ describe('useStreamSelector (Vue)', () => {
     expect(result.error.value).toBeNull();
   });
 });
+
+describe('useAgenticStream (Vue) remount', () => {
+  it('unmount during connect and a remount with the same transport ends with one connected stream that completes', async () => {
+    const run = loadRuns().streamed!;
+    const routes = fakeRoutes(run, { visible: 0 });
+    vi.stubGlobal('fetch', routes.fetch);
+    const echo = fakeEcho();
+    const id = run.stored[0]!.body.stream_id as string;
+    const transport = new BroadcastTransport({ echo: echo.echo, channel: `private-agenticgraph.stream.${id}`, replayUrl: `/s/${id}/events`, token: 't1' });
+
+    mountComposable(() => useAgenticStream({ transport })).unmount();
+    const second = mountComposable(() => useAgenticStream({ transport }));
+    await waitForClient(second.result);
+    await new Promise((done) => setTimeout(done, 20));
+
+    expect(transport.getStopReason()).toBeNull();
+    expect(transport.getConnectionState()).toBe('connected');
+    expect(echo.log.at(-1)).toBe(`subscribe private-agenticgraph.stream.${id}`);
+
+    routes.visible = run.stored.length;
+    run.broadcast.forEach((frame) => echo.push(frame));
+    for (let i = 0; i < 50 && second.result.status.value !== 'complete'; i += 1) {
+      await new Promise((done) => setTimeout(done, 5));
+    }
+    expect(second.result.status.value).toBe('complete');
+    expect(second.result.text.value).toBe(run.text);
+    vi.unstubAllGlobals();
+  });
+});

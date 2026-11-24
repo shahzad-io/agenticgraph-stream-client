@@ -19,6 +19,8 @@ import type { StreamEvent } from '../types/events.js';
 import { BroadcastTransport } from './broadcast-transport.js';
 import type { BroadcastTransportOptions } from './broadcast-types.js';
 import { EchoTransport } from './echo-transport.js';
+import { SSETransport } from './sse-transport.js';
+import type { EventSourceLike } from './sse-types.js';
 
 type Factory = (options: BroadcastTransportOptions) => StreamTransport;
 
@@ -123,6 +125,7 @@ const terminalAt = frames.findIndex((f) => f.event === 'execution_terminal');
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.useRealTimers();
+  vi.restoreAllMocks();
 });
 
 describe(`broadcast contract (spec 8.3) on ${process.env.BROADCAST_TEST_TRANSPORT ?? 'broadcast'}`, () => {
@@ -383,5 +386,52 @@ describe(`broadcast contract (spec 8.3) on ${process.env.BROADCAST_TEST_TRANSPOR
 
       expectContract(view, run, name === 'failed' ? 'error' : 'complete');
     }
+  });
+});
+
+describe('BroadcastTransport failure backoff', () => {
+  /** Advance fake time until the transport is `failed`. Returns the elapsed ms. */
+  async function msUntilFailed(transport: StreamTransport): Promise<number> {
+    const t0 = Date.now();
+    await transport.connect();
+
+    for (let i = 0; i < 2000 && transport.getConnectionState() !== 'failed'; i += 1) {
+      await vi.advanceTimersByTimeAsync(50);
+    }
+
+    expect(transport.getStopReason?.()).toBe('failed');
+
+    return Date.now() - t0;
+  }
+
+  it('with the defaults, a replay route that answers 503 every time stops within the SSETransport time', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+
+    // SSETransport, defaults: every EventSource fails at once, the status probe answers 503.
+    vi.stubGlobal('fetch', async () => new Response('', { status: 503 }));
+    const sse = new SSETransport({
+      url: '/agentic-graph/streams/s',
+      eventSourceFactory: (url) => {
+        const source = { url, onopen: null, onerror: null, readyState: 0, addEventListener() {}, removeEventListener() {}, close() {} } as EventSourceLike;
+        queueMicrotask(() => source.onerror?.(new Event('error')));
+
+        return source;
+      },
+    });
+    const sseMs = await msUntilFailed(sse);
+
+    const routes = fakeRoutes(streamed, { failReplays: Infinity });
+    vi.stubGlobal('fetch', routes.fetch);
+    const streamId = streamed.stored[0]?.body.stream_id as string;
+    const broadcast = new BroadcastTransport({
+      echo: fakeEcho().echo,
+      channel: `private-agenticgraph.stream.${streamId}`,
+      replayUrl: `/agentic-graph/streams/${streamId}/events`,
+    });
+    const broadcastMs = await msUntilFailed(broadcast);
+
+    expect(routes.replays).toBe(6);
+    expect(broadcastMs).toBeLessThanOrEqual(sseMs + 50);
   });
 });

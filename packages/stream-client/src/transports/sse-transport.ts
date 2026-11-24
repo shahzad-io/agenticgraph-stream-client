@@ -5,6 +5,7 @@ import type {
   StreamTransportStopReason,
 } from '../transport.js';
 import type { EventSourceFactory, EventSourceLike, SSETransportOptions } from './sse-types.js';
+import { BACKOFF_BASE_DELAY_MS, BACKOFF_MAX_DELAY_MS, backoffDelayMs } from './backoff.js';
 import { streamErrorCode, withQuery } from './url.js';
 import { wireToStreamEvent } from './wire-event.js';
 
@@ -120,8 +121,8 @@ export class SSETransport implements StreamTransport {
     this.baseUrl = options.url;
     this.eventSourceFactory = options.eventSourceFactory ?? defaultEventSourceFactory;
     this.maxAttempts = options.maxAttempts ?? 5;
-    this.baseDelayMs = options.baseDelayMs ?? 500;
-    this.maxDelayMs = options.maxDelayMs ?? 10000;
+    this.baseDelayMs = options.baseDelayMs ?? BACKOFF_BASE_DELAY_MS;
+    this.maxDelayMs = options.maxDelayMs ?? BACKOFF_MAX_DELAY_MS;
     this.resolveUrl = options.resolveUrl;
     this.refreshToken = options.refreshToken;
   }
@@ -320,8 +321,7 @@ export class SSETransport implements StreamTransport {
       return;
     }
 
-    const exponential = Math.min(this.maxDelayMs, this.baseDelayMs * 2 ** (this.failures - 1));
-    this.scheduleReopen(exponential / 2 + Math.random() * (exponential / 2));
+    this.scheduleReopen(backoffDelayMs(this.failures, this.baseDelayMs, this.maxDelayMs));
   }
 
   private scheduleReopen(delayMs: number): void {

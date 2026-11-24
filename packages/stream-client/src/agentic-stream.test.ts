@@ -803,3 +803,23 @@ describe('status model and connection states', () => {
     await stream.disconnect();
   });
 });
+
+describe('AgenticStream transport owner', () => {
+  it('disconnect() stops the transport only while this stream owns it (the last stream connected on it)', async () => {
+    const transport = new MockTransport();
+    const first = await AgenticStream.connect({ transport });
+    const second = await AgenticStream.connect({ transport });
+    const received: string[] = [];
+    second.on((event) => received.push(event.eventType));
+
+    await first.disconnect();
+    transport.emit(makeTextDeltaEvent('still here'));
+
+    expect(transport.getConnectionState()).toBe('connected');
+    expect(received).toEqual(['text_delta']);
+
+    await second.disconnect();
+
+    expect(transport.getConnectionState()).toBe('disconnected');
+  });
+});

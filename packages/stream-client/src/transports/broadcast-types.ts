@@ -36,8 +36,8 @@ export interface BroadcastTransportOptions {
   idleMs?: number;
   /**
    * Consecutive failed replays (network error, 5xx) before the transport gives up with state and stop reason
-   * `failed`, as `SSETransport`. A replay that answers resets the count. A failed replay is retried at the idle
-   * timer. Default 5.
+   * `failed`, as `SSETransport`. A replay that answers resets the count. A failed replay is retried with the
+   * `SSETransport` reconnect backoff (500 ms doubling to 10 s, with jitter), not at the idle timer. Default 5.
    */
   maxAttempts?: number;
 }
