@@ -1,6 +1,6 @@
 {
   "name": "@agenticgraph/stream-client",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "Framework-agnostic streaming SDK for AgenticGraph wire events",
   "keywords": [
     "agenticgraph",
