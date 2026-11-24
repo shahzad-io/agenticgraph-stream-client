@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.2.0 - Unreleased
+## 0.2.0 - 2026-11-25
 
 Broadcast keeps the SSE contract: the same events, in the same order, with no loss, no duplicates and the correct end status, after a drop, a reconnect and a late join. Needs core 0.3.0 for `BroadcastTransport`.
 
