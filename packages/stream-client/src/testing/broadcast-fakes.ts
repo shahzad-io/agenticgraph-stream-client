@@ -138,6 +138,8 @@ export interface FakeRoutesOptions {
   expiredTokens?: string[];
   /** Channel auth answers 403 `stream_forbidden`. */
   authForbidden?: boolean;
+  /** The first N replays answer 503 (Infinity: every replay). */
+  failReplays?: number;
 }
 
 /** The core replay route and channel auth route over one recorded run, as a `fetch`. */
@@ -186,6 +188,10 @@ export function fakeRoutes(run: RecordedRun, options: FakeRoutesOptions = {}) {
 
       if (gate) {
         await gate;
+      }
+
+      if (routes.replays <= (options.failReplays ?? 0)) {
+        return new Response('', { status: 503 });
       }
 
       const after = url.searchParams.has('after') ? Number(url.searchParams.get('after')) : null;

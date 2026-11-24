@@ -34,6 +34,12 @@ export interface BroadcastTransportOptions {
   resolveReplayUrl?: (cursor: number | null) => Promise<string | null> | string | null;
   /** No frame for this long while streaming starts one replay (then 2x, 4x, then every 6x). Default 5000. */
   idleMs?: number;
+  /**
+   * Consecutive failed replays (network error, 5xx) before the transport gives up with state and stop reason
+   * `failed`, as `SSETransport`. A replay that answers resets the count. A failed replay is retried at the idle
+   * timer. Default 5.
+   */
+  maxAttempts?: number;
 }
 
 /** One page of the core replay route (`GET {prefix}/{streamId}/events`). */

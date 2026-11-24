@@ -71,7 +71,7 @@ function controlName(data: unknown): string | null {
  * the EventSource (no native browser retry) and reopens with `?cursor=<lastSeq>`, with
  * exponential backoff and jitter. Stops on a `completed`/`failed` terminal, on control
  * `replay_unavailable`, when `resolveUrl` returns `null`, on `disconnect()`, or after
- * `maxAttempts` consecutive failures (state `failed`). `getStopReason()` says which.
+ * `maxAttempts` consecutive failures (state `failed`), or on a 403 (stop reason `unauthorized`). `getStopReason()` says which.
  */
 export class SSETransport implements StreamTransport {
   private readonly baseUrl: string;
@@ -258,7 +258,8 @@ export class SSETransport implements StreamTransport {
       return;
     }
 
-    if (this.refreshToken && url !== null) {
+    if (url !== null) {
+      this.setConnectionState('reconnecting');
       void this.checkToken(url);
 
       return;
@@ -267,7 +268,10 @@ export class SSETransport implements StreamTransport {
     this.retryAfterFailure();
   }
 
-  /** Spec 5.3: read the status EventSource hides. 403 expired: refresh once and reopen; any other 403: stop. */
+  /**
+   * Spec 5.3: read the status EventSource hides, once per error. 403 `stream_token_expired` with `refreshToken`:
+   * refresh once and reopen; any 403 not refreshed: stop with `unauthorized`; anything else: the normal backoff.
+   */
   private async checkToken(url: string): Promise<void> {
     const controller = new AbortController();
     let response: Response | null = null;

@@ -98,11 +98,14 @@ function setup(options: Partial<SSETransportOptions> = {}) {
 beforeEach(() => {
   vi.useFakeTimers();
   vi.spyOn(Math, 'random').mockReturnValue(0.5);
+  // The probe after each error (spec 5.3): by default the route answers 200, so the normal backoff runs.
+  vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 200 })));
 });
 
 afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe('SSETransport', () => {
@@ -413,6 +416,7 @@ describe('SSETransport', () => {
     const failed = setup({ maxAttempts: 0 });
     await failed.transport.connect();
     failed.last().fail();
+    await vi.advanceTimersByTimeAsync(0);
     await failed.transport.disconnect();
 
     expect(terminal.transport.getStopReason()).toBe('terminal');
@@ -428,6 +432,7 @@ describe('SSETransport', () => {
 
     await transport.connect();
     last().fail();
+    await vi.advanceTimersByTimeAsync(0);
     expect(transport.getStopReason()).toBe('failed');
 
     await transport.reconnect();
@@ -442,6 +447,7 @@ describe('SSETransport', () => {
     last().open();
     send(last(), 5);
     last().fail();
+    await vi.advanceTimersByTimeAsync(0);
     expect(transport.getConnectionState()).toBe('failed');
 
     await transport.reconnect();
@@ -591,6 +597,25 @@ describe('SSETransport refreshToken (spec 5.3)', () => {
     expect(refreshToken).toHaveBeenCalledTimes(2);
     expect(transport.getStopReason()).toBe('unauthorized');
     expect(transport.getConnectionState()).toBe('disconnected');
+    vi.unstubAllGlobals();
+  });
+
+  it.each(['stream_token_expired', 'stream_token_invalid'])('403 %s with no refreshToken stops with unauthorized, not failed after maxAttempts', async (code) => {
+    const probe = vi.fn(async () => Response.json({ error: code }, { status: 403 }));
+    vi.stubGlobal('fetch', probe);
+    const { transport, fakes, stops, last } = setup({ url: 'http://localhost/streams/s1?token=t1', maxAttempts: 2 });
+
+    await transport.connect();
+
+    for (let i = 0; i < 3 && transport.getStopReason() === null; i += 1) {
+      last().fail();
+      await vi.advanceTimersByTimeAsync(10_000);
+    }
+
+    expect(transport.getStopReason()).toBe('unauthorized');
+    expect(stops).toEqual([['disconnected', 'unauthorized']]);
+    expect(probe).toHaveBeenCalledTimes(1);
+    expect(fakes).toHaveLength(1);
     vi.unstubAllGlobals();
   });
 });

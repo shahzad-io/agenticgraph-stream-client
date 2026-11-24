@@ -545,4 +545,25 @@ describe('useAgenticStream when connect() rejects (React)', () => {
     expect(hook.result.current.finalText).toBe(run.text);
     vi.unstubAllGlobals();
   });
+
+  it('unmount during connect stops the transport by hand, with no unhandled rejection', async () => {
+    const rejections: unknown[] = [];
+    const onRejection = (reason: unknown) => rejections.push(reason);
+    process.on('unhandledRejection', onRejection);
+    const echo = fakeEcho({ manualConfirm: true });
+    const transport = new BroadcastTransport({ echo: echo.echo, channel: 'private-agenticgraph.stream.s1', replayUrl: '/s/s1/events', token: 't1' });
+    const hook = renderHook(() => useAgenticStream({ transport }));
+
+    await act(async () => {
+      await new Promise((done) => setTimeout(done, 5));
+    });
+    expect(transport.getConnectionState()).toBe('connecting');
+    hook.unmount();
+    await new Promise((done) => setTimeout(done, 20));
+    process.off('unhandledRejection', onRejection);
+
+    expect(transport.getStopReason()).toBe('manual');
+    expect(echo.log).toContain('leave agenticgraph.stream.s1');
+    expect(rejections).toEqual([]);
+  });
 });

@@ -5,7 +5,7 @@ export type StreamTransportConnectionState =
   | 'connecting'
   | 'connected'
   | 'reconnecting'
-  /** Gave up after `maxAttempts` consecutive failed reconnects (SSETransport). */
+  /** Gave up after `maxAttempts` consecutive failed reconnects (SSETransport) or replays (BroadcastTransport). */
   | 'failed';
 
 /** Why a transport stopped (SSETransport, BroadcastTransport). `null` while it is running or before it starts. */

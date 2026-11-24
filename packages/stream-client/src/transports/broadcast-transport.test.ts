@@ -339,6 +339,32 @@ describe(`broadcast contract (spec 8.3) on ${process.env.BROADCAST_TEST_TRANSPOR
     expect(view.status).toBe('idle');
   });
 
+  it('12a. a replay route that answers 503 every time stops after maxAttempts with failed', async () => {
+    const view = await (
+      await follow(streamed, { routes: { failReplays: Infinity }, transport: { idleMs: 20, maxAttempts: 2 } })
+    ).connected();
+    await until(() => view.transport.getStopReason?.() !== null, 1000).catch(() => undefined);
+    await sleep(200);
+
+    expect(view.transport.getStopReason?.()).toBe('failed');
+    expect(view.transport.getConnectionState()).toBe('failed');
+    expect(view.routes.replays).toBe(3);
+    expect(view.stream?.error).toMatchObject({ kind: 'connection', canReconnect: true });
+  });
+
+  it('12b. replay failures that recover before maxAttempts complete; a success resets the count', async () => {
+    const view = await (
+      await follow(streamed, { routes: { failReplays: 2 }, transport: { idleMs: 20, maxAttempts: 2 } })
+    ).connected();
+    await until(() => view.routes.replays >= 3);
+    view.begin();
+    view.push(frames.filter((_, i) => i < 11 || i > 14));
+    await until(() => view.status === 'complete').catch(() => undefined);
+
+    expectContract(view, streamed);
+    expect(view.transport.getStopReason?.()).toBe('terminal');
+  });
+
   it('replays page by page while more is true', async () => {
     const view = await (await follow(streamed, { routes: { visible: streamed.stored.length, pageSize: 10 } })).connected();
     await until(() => view.status === 'complete').catch(() => undefined);

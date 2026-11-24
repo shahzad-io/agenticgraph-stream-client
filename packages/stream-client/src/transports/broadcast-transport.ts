@@ -36,13 +36,19 @@ function terminalStatus(type: string, body: Record<string, unknown>): unknown {
  * confirmed cursor), merge by seq. Steady state: unpack `batch` frames, drop seen seq, hold frames above a hole and
  * replay after the confirmed cursor (debounced). End: a completed or failed `execution_terminal` stops the transport,
  * after a replay when a hole is open; `stream_close` without the terminal replays at once; no frame for `idleMs`
- * while streaming replays with backoff. `interrupted` keeps it connected. `stream_close` is never passed on (SSE
- * has none), so handlers see the same events as on SSE.
+ * while connected and not interrupted replays with backoff. More than `maxAttempts` failed replays in a row stop it
+ * with `failed`. `interrupted` keeps it connected. `stream_close` is never passed on (SSE has none), so handlers see
+ * the same events as on SSE.
  */
 export class BroadcastTransport implements StreamTransport {
   private readonly options: BroadcastTransportOptions;
 
   private readonly idleMs: number;
+
+  private readonly maxAttempts: number;
+
+  /** Consecutive failed replays. */
+  private failures = 0;
 
   private token: string | null;
 
@@ -84,6 +90,7 @@ export class BroadcastTransport implements StreamTransport {
   constructor(options: BroadcastTransportOptions) {
     this.options = options;
     this.idleMs = options.idleMs ?? 5000;
+    this.maxAttempts = options.maxAttempts ?? 5;
     this.token = options.token ?? null;
   }
 
@@ -142,6 +149,7 @@ export class BroadcastTransport implements StreamTransport {
     this.stopped = false;
     this.stopReason = null;
     this.started = false;
+    this.failures = 0;
     this.setConnectionState(state);
 
     const { echo, channel: name } = this.options;
@@ -372,7 +380,7 @@ export class BroadcastTransport implements StreamTransport {
     }
   }
 
-  /** One replay page. Null: stopped (resolver, unauthorized) or failed, with a retry scheduled. */
+  /** One replay page. Null: stopped (resolver, unauthorized, failed) or failed with a retry scheduled. */
   private async fetchPage(): Promise<ReplayPage | null> {
     try {
       const base = this.options.resolveReplayUrl
@@ -403,11 +411,19 @@ export class BroadcastTransport implements StreamTransport {
         throw new Error(`replay ${response.status}`);
       }
 
-      return (await response.json()) as ReplayPage;
+      const page = (await response.json()) as ReplayPage;
+      this.failures = 0;
+
+      return page;
     } catch {
-      // ponytail: a failed replay (network, 5xx) waits for the idle timer, which keeps backing off. A stop after
-      // N failures, as SSETransport's maxAttempts, if a dead route must surface sooner.
-      this.armIdle(false);
+      // A failed replay (network, 5xx) is retried at the idle timer, up to maxAttempts in a row.
+      this.failures += 1;
+
+      if (this.failures > this.maxAttempts) {
+        this.stop('failed', 'failed');
+      } else {
+        this.armIdle(false);
+      }
 
       return null;
     }
@@ -464,7 +480,7 @@ export class BroadcastTransport implements StreamTransport {
   }
 
   /** The first stop holds until the next connect()/reconnect(). */
-  private stop(state: 'disconnected', reason: StreamTransportStopReason): void {
+  private stop(state: 'disconnected' | 'failed', reason: StreamTransportStopReason): void {
     if (this.stopped) {
       return;
     }

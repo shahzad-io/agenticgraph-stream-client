@@ -1,7 +1,7 @@
 import { mount, flushPromises } from '@vue/test-utils';
-import { defineComponent, nextTick } from 'vue';
+import { defineComponent, nextTick, shallowRef } from 'vue';
 import { describe, expect, it, vi } from 'vitest';
-import { BroadcastTransport, MockTransport, SSETransport, type EventSourceLike } from '@agenticgraph/stream-client';
+import { BroadcastTransport, MockTransport, SSETransport, type EventSourceLike, type StreamTransport } from '@agenticgraph/stream-client';
 import { fakeEcho, fakeRoutes, loadRuns } from '../../stream-client/src/testing/broadcast-fakes.js';
 import {
   makeExecutionTerminalEvent,
@@ -369,5 +369,43 @@ describe('useStreamSelector (Vue)', () => {
     expect(result.text.value).toBe(run.text);
     expect(result.finalText.value).toBe(run.text);
     vi.unstubAllGlobals();
+  });
+
+  it('unmount during connect stops the transport by hand, with no unhandled rejection', async () => {
+    const rejections: unknown[] = [];
+    const onRejection = (reason: unknown) => rejections.push(reason);
+    process.on('unhandledRejection', onRejection);
+    const echo = fakeEcho({ manualConfirm: true });
+    const transport = new BroadcastTransport({ echo: echo.echo, channel: 'private-agenticgraph.stream.s1', replayUrl: '/s/s1/events', token: 't1' });
+    const { result, unmount } = mountComposable(() => useAgenticStream({ transport }));
+
+    await new Promise((done) => setTimeout(done, 5));
+    expect(transport.getConnectionState()).toBe('connecting');
+    unmount();
+    await new Promise((done) => setTimeout(done, 20));
+    process.off('unhandledRejection', onRejection);
+
+    expect(transport.getStopReason()).toBe('manual');
+    expect(echo.log).toContain('leave agenticgraph.stream.s1');
+    expect(result.client.value).toBeNull();
+    expect(rejections).toEqual([]);
+  });
+
+  it('a transport change during connect stops the old transport; its late result does not become the client', async () => {
+    const echo = fakeEcho({ manualConfirm: true });
+    const old = new BroadcastTransport({ echo: echo.echo, channel: 'private-agenticgraph.stream.s1', replayUrl: '/s/s1/events', token: 't1' });
+    const next = new MockTransport();
+    const transport = shallowRef<StreamTransport>(old);
+    const { result } = mountComposable(() => useAgenticStream({ get transport() { return transport.value; } }));
+
+    await new Promise((done) => setTimeout(done, 5));
+    transport.value = next;
+    await waitForClient(result);
+    await new Promise((done) => setTimeout(done, 20));
+
+    expect(old.getStopReason()).toBe('manual');
+    expect(next.getConnectionState()).toBe('connected');
+    expect(result.status.value).toBe('idle');
+    expect(result.error.value).toBeNull();
   });
 });

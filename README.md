@@ -207,7 +207,7 @@ A Laravel signed stream URL must ignore the `cursor` parameter (`$request->hasVa
 
 ### Stream token (core 0.3)
 
-Core 0.3 adds a stream token to `stream_url` (`token`). Pass the URL as the server gives it. The token expires: give the transport `refreshToken`, a function that returns a fresh `$handle->streamToken()` from your app, or `null`. On 403 `stream_token_expired` the transport calls it once and retries. `null`, another 403 code or a second 403 stops it with `'unauthorized'`. `EventSource` cannot read a status, so with `refreshToken` set `SSETransport` checks a failed connection once with `fetch`.
+Core 0.3 adds a stream token to `stream_url` (`token`). Pass the URL as the server gives it. The token expires: give the transport `refreshToken`, a function that returns a fresh `$handle->streamToken()` from your app, or `null`. On 403 `stream_token_expired` the transport calls it once and retries. `null`, another 403 code or a second 403 stops it with `'unauthorized'`. `EventSource` cannot read a status, so after every error `SSETransport` checks the URL once with `fetch`, with or without `refreshToken`. Without `refreshToken`, any 403 stops it with `'unauthorized'`.
 
 ## Broadcast (core 0.3)
 
@@ -232,7 +232,7 @@ const stream = await AgenticStream.connect({ transport });
 - `createStreamTransport()` returns `SSETransport` or `BroadcastTransport` from `descriptor.transport`. Your handlers, hooks and selectors do not change.
 - The channel is private. `streamChannelAuthorizer()` answers Echo's channel auth for stream channels with the token and `auth_url` of the transport. Echo has one handler per instance, so pass your own as `fallback` for your other private channels.
 - `BroadcastTransport` waits for the subscription to be confirmed, replays from the store (following `more`), merges by seq, unpacks `batch` frames and drops duplicates. A hole in seq starts one replay after 250 ms. A `completed` or `failed` terminal stops it; `stream_close` without the terminal replays at once; no frame for `idleMs` (5000) while streaming replays, then after 10 s, 20 s and every 30 s. `interrupted` keeps it connected.
-- Stop reasons as on SSE: `'terminal'`, `'replay_unavailable'` (replay `gone`), `'resolver'` (`resolveReplayUrl` returned `null`), `'manual'`, `'unauthorized'` (403 or channel auth refused).
+- Stop reasons as on SSE: `'terminal'`, `'replay_unavailable'` (replay `gone`), `'resolver'` (`resolveReplayUrl` returned `null`), `'manual'`, `'failed'` (more than `maxAttempts` failed replays in a row, network error or 5xx; default 5), `'unauthorized'` (403 or channel auth refused).
 - Queue the run on the server: on the `sync` queue the web request runs the whole broadcast run.
 - `EchoTransport` is deprecated. It works only with `AGENTICGRAPH_STREAM_BROADCAST_PRIVATE=false` and `AGENTICGRAPH_STREAM_BROADCAST_BATCH_MS=0`.
 

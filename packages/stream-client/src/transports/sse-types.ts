@@ -40,7 +40,8 @@ export interface SSETransportOptions {
   /**
    * Called once when the route answers 403 `stream_token_expired`. Return a fresh token (`$handle->streamToken()`):
    * the transport reopens with it as `token`. Null, another 403 code, or a second 403 stops it with `unauthorized`.
-   * EventSource cannot read a status, so with this option a failed connection is checked once with `fetch`.
+   * EventSource cannot read a status, so after every error the transport checks the URL once with `fetch` (with or
+   * without this option). Without it, any 403 stops with `unauthorized`.
    */
   refreshToken?: () => Promise<string | null>;
 }

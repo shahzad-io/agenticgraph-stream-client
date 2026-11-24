@@ -475,7 +475,8 @@ async function check3() {
       onEvent: (event) => {
         if (!dropped && event.eventType === 'text_delta') {
           dropped = true;
-          proxy.refuse = 2;
+          // Each error is followed by one fetch probe (spec 5.3), also a connection: 4 refused is 2 reopens and their probes.
+          proxy.refuse = 4;
           proxy.dropAll();
         }
       },
@@ -490,7 +491,7 @@ async function check3() {
 
     return {
       pass: run.stream.status === 'complete' && comparison.textEqual && comparison.seqsEqual
-        && summary.reconnects === 3 && proxy.refused === 2 && withinBackoff && !summary.failedState,
+        && summary.reconnects === 3 && proxy.refused === 4 && withinBackoff && !summary.failedState,
       status: run.stream.status,
       refusedByProxy: proxy.refused,
       attemptDelaysMs: attemptDelays,

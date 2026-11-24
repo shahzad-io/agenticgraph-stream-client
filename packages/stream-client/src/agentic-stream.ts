@@ -51,8 +51,10 @@ export class AgenticStream {
   /**
    * Connect a transport and return the stream.
    *
-   * Resolves once the transport reports `connected`. Rejects when the transport reports
-   * `failed`, or stops (for example `unauthorized`), first.
+   * Resolves once the transport reports `connected`, or when it is stopped by hand
+   * (`transport.disconnect()`, stop reason `manual`) first: then the stream is already stopped.
+   * Rejects when the transport reports `failed`, or stops for any other reason (for example
+   * `unauthorized`), first.
    */
   static async connect(options: AgenticStreamConnectOptions): Promise<AgenticStream> {
     const stream = new AgenticStream(options.transport);
@@ -175,7 +177,7 @@ export class AgenticStream {
     this.bindTransport();
     await this.transport.connect();
     await this.waitForConnectionState('connected');
-    this.connected = true;
+    this.connected = this.transport.getConnectionState() === 'connected';
   }
 
   private waitForConnectionState(target: StreamTransportConnectionState): Promise<void> {
@@ -204,6 +206,12 @@ export class AgenticStream {
         }
 
         const stopReason = this.transport.getStopReason?.() ?? null;
+
+        if (state === 'disconnected' && stopReason === 'manual') {
+          resolve();
+
+          return true;
+        }
 
         if (state === 'disconnected' && stopReason !== null) {
           reject(new Error(`Stream transport stopped before it connected: ${stopReason}`));

@@ -11,7 +11,7 @@ Only `src/index.ts` exports are public. Every method and name below is checked a
 
 ## Rules
 
-- `AgenticStream.connect({ transport })` is the only way to build a stream. It resolves when the transport reports `connected`, and rejects if the transport reports `failed`, or stops (for example `unauthorized`), first.
+- `AgenticStream.connect({ transport })` is the only way to build a stream. It resolves when the transport reports `connected`, or when the transport is stopped by hand (`transport.disconnect()`, stop reason `manual`) first. It rejects if the transport reports `failed`, or stops for any other reason (for example `unauthorized`), first. The React and Vue hooks stop the transport by hand when the component unmounts during connect.
 - Build the transport from the descriptor the server sends (`$handle->stream()->toArray()`) with `createStreamTransport(descriptor, { echo })`. The handlers do not change between SSE and broadcast.
 - One `connect()` per transport. With the React or Vue hook, the hook owns the connection: do not also call `connect()` on the same transport.
 - `SSETransport` and `BroadcastTransport` both give every stored event once, in seq order, after a drop or a late join. `EchoTransport` is deprecated: it loses events, drops `batch` frames and works only with `private = false` and `batch_ms = 0` on the server.
@@ -60,7 +60,7 @@ stream.onStatusChange((status, snapshot) => render(status, snapshot.error));
 | `replay_unavailable` | The cursor is older than the server keeps (SSE control, or replay `gone` on broadcast) | `error`, `error.kind` is `replay_unavailable`, with `cursor` and `final_state` |
 | `resolver` | `resolveUrl` or `resolveReplayUrl` returned `null` | Unchanged. Not an error. |
 | `manual` | `disconnect()` was called | Unchanged |
-| `failed` | `maxAttempts` failures in a row (SSE) | `error`, `connection` |
+| `failed` | More than `maxAttempts` failures in a row: reconnects (SSE) or replays (broadcast, network error or 5xx) | `error`, `connection` |
 | `unauthorized` | 403 from a stream route or from channel auth: invalid token, `refreshToken` gave no new token, or the app authorizer said no | `error`, `connection` with `canReconnect` false; `connect()` rejects if it happens before `connected` |
 
 An exhaustive `switch` over `StreamTransportStopReason` must handle `unauthorized`.
@@ -117,9 +117,9 @@ const stream = await AgenticStream.connect({ transport });
 - `createStreamTransport()` returns `SSETransport` for `transport: 'sse'` and `BroadcastTransport` for `transport: 'broadcast'`. A broadcast descriptor without `echo` throws.
 - The channel is private (`private-agenticgraph.stream.{id}`). `streamChannelAuthorizer()` answers Echo's auth for stream channels with the token and `auth_url` of the transport that subscribed. Echo has one auth handler per instance: pass your own handler as `fallback` for your other private channels.
 - `BroadcastTransport` waits for the subscription to be confirmed, then reads the store through the replay route, and merges it with the live frames by seq. It unpacks `batch` frames, drops events it has seen, and holds frames after a hole until a replay fills it (250 ms debounce). The store decides: seq can have holes that exist nowhere (an event filter).
-- End: a `completed` or `failed` `execution_terminal` stops it (`terminal`). `stream_close` without the terminal starts a replay at once. With no frame for `idleMs` (5000) while streaming it replays, then after 10 s, 20 s and every 30 s; a frame resets this. `interrupted` keeps it connected.
+- End: a `completed` or `failed` `execution_terminal` stops it (`terminal`). `stream_close` without the terminal starts a replay at once. With no frame for `idleMs` (5000) while connected and not interrupted it replays, then after 10 s, 20 s and every 30 s; a frame resets this. `interrupted` keeps it connected.
 - `stream_close` is not passed to handlers: on SSE it does not exist, so the handlers see the same events on both transports.
-- Options: `echo`, `channel`, `replayUrl`, `authUrl`, `token`, `refreshToken`, `resolveReplayUrl`, `idleMs`. `resolveReplayUrl(cursor)` runs before each replay; `null` stops with `resolver`.
+- Options: `echo`, `channel`, `replayUrl`, `authUrl`, `token`, `refreshToken`, `resolveReplayUrl`, `idleMs`, `maxAttempts`. `resolveReplayUrl(cursor)` runs before each replay; `null` stops with `resolver`. A failed replay (network error or 5xx) is retried at the idle timer; when the failures in a row go past `maxAttempts` (5) it stops with `failed`, as on SSE. A replay that answers resets the count.
 - Queue the run on the server (not `sync`), or the web request runs the whole broadcast run.
 
 ## Echo transport (deprecated)
