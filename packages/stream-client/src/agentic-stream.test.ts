@@ -525,6 +525,38 @@ describe('status model and connection states', () => {
     await stream.disconnect();
   });
 
+  it('passes reason skipped on graph_failed and ends as terminal_error on the failed terminal', async () => {
+    const transport = new MockTransport();
+    const stream = await AgenticStream.connect({ transport });
+    const reasons: unknown[] = [];
+    stream.on('graph_failed', (event) => {
+      reasons.push(event.payload.reason);
+    });
+    const meta = { error_type: 'ExecutionFailed', message: 'The execution failed.', reason: 'skipped' };
+    const terminal = makeExecutionTerminalEvent('failed', meta);
+
+    transport.emit({
+      ...terminal,
+      eventType: 'graph_failed',
+      payload: { error_type: meta.error_type, message: meta.message, reason: 'skipped' },
+    });
+    expect(stream.status).toBe('streaming');
+
+    transport.emit({ ...terminal, seq: terminal.seq + 1 });
+
+    expect(reasons).toEqual(['skipped']);
+    expect(stream.status).toBe('error');
+    expect(stream.error).toMatchObject({
+      kind: 'terminal_error',
+      source: 'execution_terminal',
+      message: meta.message,
+      meta: { reason: 'skipped' },
+      canReconnect: false,
+    });
+
+    await stream.disconnect();
+  });
+
   it('keeps a failed terminal error when the transport disconnects afterwards', async () => {
     const transport = new MockTransport();
     const stream = await AgenticStream.connect({ transport });

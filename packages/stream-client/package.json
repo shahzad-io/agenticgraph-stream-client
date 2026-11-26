@@ -1,6 +1,6 @@
 {
   "name": "@agenticgraph/stream-client",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Framework-agnostic streaming SDK for AgenticGraph wire events",
   "keywords": [
     "agenticgraph",
@@ -49,7 +49,7 @@
   ],
   "scripts": {
     "build": "tsup",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.types.json",
     "test": "vitest run",
     "prepublishOnly": "npm run build"
   },

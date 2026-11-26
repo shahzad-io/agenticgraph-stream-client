@@ -1,6 +1,6 @@
 {
   "name": "@agenticgraph/stream-react",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "React hooks and selectors for AgenticGraph streaming",
   "keywords": [
     "agenticgraph",
@@ -50,7 +50,7 @@
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
-    "@agenticgraph/stream-client": "^0.2.0"
+    "@agenticgraph/stream-client": "^0.2.1"
   },
   "peerDependencies": {
     "react": ">=18"
