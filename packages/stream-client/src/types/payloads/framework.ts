@@ -29,8 +29,8 @@ export type ErrorType = ProviderErrorCategory | 'ExecutionFailed' | (string & {}
 /** Fixed categories the server picks for a failed model provider call (never the provider's text). */
 export type ProviderErrorCategory = 'rate_limited' | 'provider_unavailable' | 'provider_error';
 
-/** Why an execution was failed from outside the run. */
-export type GraphFailedReason = 'interrupt_expired' | 'stale_queued' | 'stale_running';
+/** Why an execution was failed from outside the run. `skipped`: the app skipped a queued run (core 0.4.0). */
+export type GraphFailedReason = 'interrupt_expired' | 'stale_queued' | 'stale_running' | 'skipped';
 
 export interface GraphFailedPayload {
   /** See {@link ErrorType}. */

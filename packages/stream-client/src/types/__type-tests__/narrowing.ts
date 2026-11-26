@@ -36,11 +36,13 @@ function assertKnownNarrowing(e: KnownStreamEvent): void {
 
 void assertKnownNarrowing;
 
-import type { ProviderErrorCategory } from '../payloads/framework.js';
+import type { ExecutionTerminalMeta, GraphFailedReason, ProviderErrorCategory } from '../payloads/framework.js';
 
 function assertErrorTypes(e: KnownStreamEvent): void {
   if (e.eventType === 'graph_failed') {
-    e.payload.reason satisfies 'interrupt_expired' | 'stale_queued' | 'stale_running' | undefined;
+    e.payload.reason satisfies 'interrupt_expired' | 'stale_queued' | 'stale_running' | 'skipped' | undefined;
+    // A run the app skipped (core 0.4.0).
+    void (e.payload.reason === 'skipped');
     e.payload.error_type satisfies string;
   }
 
@@ -50,6 +52,7 @@ function assertErrorTypes(e: KnownStreamEvent): void {
 
   if (e.eventType === 'execution_terminal') {
     e.payload.meta?.error_type satisfies unknown;
+    void (e.payload.meta?.reason === 'skipped');
   }
 
   const category: ProviderErrorCategory = 'rate_limited';
@@ -57,3 +60,7 @@ function assertErrorTypes(e: KnownStreamEvent): void {
 }
 
 void assertErrorTypes;
+
+const skippedReason: GraphFailedReason = 'skipped';
+const skippedMeta: ExecutionTerminalMeta = { reason: skippedReason };
+void skippedMeta;

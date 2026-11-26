@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.1 - unreleased
+
+### Fixed
+
+- **`GraphFailedReason` lists `skipped`**, the `reason` that core 0.4.0 sends on `graph_failed`, on the failed `execution_terminal` `meta` and on broadcast `stream_close` `meta` for a run the app skipped. Only the type changes: 0.2.0 already passes the value through. A `switch` that must handle every reason now needs a `skipped` case.
+
 ## 0.2.0 - 2026-11-25
 
 Broadcast keeps the SSE contract: the same events, in the same order, with no loss, no duplicates and the correct end status, after a drop, a reconnect and a late join. Needs core 0.3.0 for `BroadcastTransport`.
