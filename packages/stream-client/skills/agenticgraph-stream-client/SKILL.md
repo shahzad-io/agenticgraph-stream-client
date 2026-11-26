@@ -5,7 +5,7 @@ description: "Consume AgenticGraph stream events in JavaScript with @agenticgrap
 
 # AgenticGraph stream client (npm)
 
-Package: `@agenticgraph/stream-client`. `SSETransport` works with AgenticGraph core 0.2.x and 0.3.x (wire contract v1.1; core 0.2.1 or later for custom events and error details). `BroadcastTransport`, `createStreamTransport()` and `streamChannelAuthorizer()` need core 0.3.0. Server side (routes, stream token, `stream()`, `broadcast()`, resume): the `agenticgraph-streaming` skill in the Laravel package.
+Package: `@agenticgraph/stream-client`. `SSETransport` works with AgenticGraph core 0.2.x, core 0.3.x and core 0.4.x (wire contract v1.1; core 0.2.1 or later for custom events and error details). `BroadcastTransport`, `createStreamTransport()` and `streamChannelAuthorizer()` need core 0.3.0. Server side (routes, stream token, `stream()`, `broadcast()`, resume): the `agenticgraph-streaming` skill in the Laravel package.
 
 Only `src/index.ts` exports are public. Every method and name below is checked against it by `src/skill.test.ts`.
 
