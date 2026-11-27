@@ -34,8 +34,12 @@ function missingCalls(text: string): string[] {
   for (const [, receiver, method] of text.matchAll(
     /\b(stream|AgenticStream|transport|SSETransport|BroadcastTransport|EchoTransport|MockTransport)\.(\w+)\s*\(/g,
   )) {
+    if (receiver === undefined || method === undefined) {
+      continue;
+    }
+
     const declaration = new RegExp(`^\\s+(?:static\\s+|async\\s+|private\\s+|readonly\\s+)*${method}\\s*\\(`, 'm');
-    const declared = CLASS_FILES[receiver].some((file) => declaration.test(read(file)));
+    const declared = (CLASS_FILES[receiver] ?? []).some((file) => declaration.test(read(file)));
 
     if (!declared) {
       missing.push(`${receiver}.${method}`);
@@ -55,6 +59,10 @@ function objectKeys(text: string, open: string): string[] {
 
     for (let i = (match.index ?? 0) + match[0].length; i < text.length && depth > 0; i += 1) {
       const ch = text[i];
+
+      if (ch === undefined) {
+        break;
+      }
 
       if (depth === 1 && expectKey && /\w/.test(ch)) {
         const key = /^\w+/.exec(text.slice(i))?.[0] ?? '';
@@ -85,7 +93,7 @@ function interfaceKeys(file: string, name: string): string[] {
   const source = read(file);
   const body = new RegExp(`export interface ${name} \\{([\\s\\S]*?)\\n\\}`).exec(source)?.[1] ?? '';
 
-  return [...body.matchAll(/^\s+(\w+)\??:/gm)].map((m) => m[1]);
+  return [...body.matchAll(/^\s+(\w+)\??:/gm)].flatMap((m) => m[1] ?? []);
 }
 
 /** Members of `export type NAME = 'a' | 'b';` in a source file. */
@@ -93,12 +101,12 @@ function unionMembers(file: string, name: string): string[] {
   const source = read(file);
   const body = new RegExp(`export type ${name} =([\\s\\S]*?);`).exec(source)?.[1] ?? '';
 
-  return [...body.matchAll(/'(\w+)'/g)].map((m) => m[1]);
+  return [...body.matchAll(/'(\w+)'/g)].flatMap((m) => m[1] ?? []);
 }
 
 const exported = new Set(
   [...read('src/index.ts').matchAll(/export\s+(?:type\s+)?\{([^}]*)\}/g)].flatMap((m) =>
-    m[1]
+    (m[1] ?? '')
       .split(',')
       .map((s) => s.trim().split(/\s+as\s+/).pop() ?? '')
       .filter((s) => s !== ''),
@@ -108,7 +116,7 @@ const exported = new Set(
 describe('agenticgraph-stream-client skill', () => {
   it('imports only names the package exports', () => {
     const imported = [...skill.matchAll(/import\s+(?:type\s+)?\{([^}]*)\}\s+from\s+'@agenticgraph\/stream-client'/g)]
-      .flatMap((m) => m[1].split(',').map((s) => s.trim().replace(/^type\s+/, '')))
+      .flatMap((m) => (m[1] ?? '').split(',').map((s) => s.trim().replace(/^type\s+/, '')))
       .filter((s) => s !== '');
 
     expect(imported.length).toBeGreaterThan(0);
@@ -130,7 +138,7 @@ describe('agenticgraph-stream-client skill', () => {
     const create = interfaceKeys('src/create-transport.ts', 'CreateStreamTransportOptions');
     expect(objectKeys(skill, 'createStreamTransport\\(descriptor, \\{')).toContain('refreshToken');
     expect(objectKeys(skill, 'createStreamTransport\\(descriptor, \\{').filter((k) => !create.includes(k))).toEqual([]);
-    const listed = /Options: (`\w+`(?:, `\w+`)*)\./.exec(skill)?.[1].match(/\w+/g) ?? [];
+    const listed = /Options: (`\w+`(?:, `\w+`)*)\./.exec(skill)?.[1]?.match(/\w+/g) ?? [];
     expect(listed).toEqual(interfaceKeys('src/transports/broadcast-types.ts', 'BroadcastTransportOptions'));
     expect(objectKeys(skill, 'AgenticStream\\.connect\\(\\{').filter((k) => !connect.includes(k))).toEqual([]);
   });
