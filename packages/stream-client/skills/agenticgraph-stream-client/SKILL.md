@@ -131,7 +131,7 @@ const stream = await AgenticStream.connect({ transport });
 With Vite, import the package from `resources/js/app.js` and load it with `@vite()`. With no bundler, load the pinned CDN build: `dist/index.global.js` sets the global `window.AgenticGraphStream`. The package exports it as `./iife`, and `unpkg` and `jsdelivr` point to it.
 
 ```html
-<script src="https://cdn.jsdelivr.net/npm/@agenticgraph/stream-client@0.2.0/dist/index.global.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@agenticgraph/stream-client@0.2.2/dist/index.global.js"></script>
 <script>
   const { AgenticStream, SSETransport } = window.AgenticGraphStream;
   AgenticStream.connect({ transport: new SSETransport({ url: streamUrl }) });

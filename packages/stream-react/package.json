@@ -1,6 +1,6 @@
 {
   "name": "@agenticgraph/stream-react",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "React hooks and selectors for AgenticGraph streaming",
   "keywords": [
     "agenticgraph",
@@ -45,12 +45,12 @@
   ],
   "scripts": {
     "build": "tsup",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.types.json",
     "test": "vitest run",
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
-    "@agenticgraph/stream-client": "^0.2.1"
+    "@agenticgraph/stream-client": "^0.2.2"
   },
   "peerDependencies": {
     "react": ">=18"
@@ -61,7 +61,7 @@
     "jsdom": "^26.1.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
-    "tsup": "^8.5.0",
+    "tsup": "^9.0.0",
     "typescript": "^5.8.3",
     "vitest": "^5.0.5"
   },

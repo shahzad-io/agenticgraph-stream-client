@@ -138,7 +138,7 @@ cp node_modules/@agenticgraph/stream-client/dist/index.global.js public/js/agent
 </script>
 ```
 
-From a CDN, pin the version: `https://unpkg.com/@agenticgraph/stream-client@0.2.0/dist/index.global.js` or `https://cdn.jsdelivr.net/npm/@agenticgraph/stream-client@0.2.0/dist/index.global.js` serves the same file.
+From a CDN, pin the version: `https://unpkg.com/@agenticgraph/stream-client@0.2.2/dist/index.global.js` or `https://cdn.jsdelivr.net/npm/@agenticgraph/stream-client@0.2.2/dist/index.global.js` serves the same file.
 
 ## Custom events (SSE)
 

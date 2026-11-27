@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.2.2 - 2026-11-27
+
+No change to the runtime code. The built JavaScript and source maps are the same, byte for byte, as a tsup 8 build of the same source. In the type declarations, only the export statements changed: type exports are now in an `export type` statement. The exported names are the same, and the Node.js requirement of the packages stays 18+.
+
+### Changed
+
+- **Build on tsup 9** (esbuild 0.28).
+- **Development needs Node.js 22.18 or later** (24.11 or later in 24.x), because tsup 9 needs it. CI runs Node.js 22 and 24. This applies only to work on this repository.
+- **Type coverage:** `npm run typecheck` now also checks the test files and the type tests of all three packages. Library source gets no Node.js globals, so a use of one fails the typecheck.
+
+### Fixed
+
+- **The agent skill names core 0.4.x** as a core that `SSETransport` works with.
+- The CDN examples in the README and the skill pin this version.
+
 ## 0.2.1 - 2026-11-27
 
 ### Fixed

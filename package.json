@@ -12,6 +12,7 @@
     "integration:parity": "npm run build -w @agenticgraph/stream-client && node scripts/parity-harness.mjs"
   },
   "devDependencies": {
+    "@types/node": "^22.20.7",
     "typescript": "^5.8.3"
   }
 }

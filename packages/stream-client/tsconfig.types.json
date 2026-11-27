@@ -1,5 +1,9 @@
 {
   "extends": "./tsconfig.json",
-  "include": ["src/types/__type-tests__"],
+  "compilerOptions": {
+    "rootDir": ".",
+    "types": ["node"]
+  },
+  "include": ["src"],
   "exclude": []
 }
